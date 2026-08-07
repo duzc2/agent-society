@@ -308,6 +308,9 @@ const handleUpdate = async (skill: GitSkillRecord) => {
     await gitSkillApi.updateGitSkill(skill.skillId);
     toast.add({ severity: 'success', summary: '更新成功', detail: `${skill.displayName} 已更新到最新版本`, life: 2500 });
     await loadAll();
+    if (selectedSkillId.value === skill.skillId) {
+      void loadSkillMd(skill.skillId);
+    }
   } catch (updateError: any) {
     toast.add({ severity: 'error', summary: '更新失败', detail: updateError?.message || '更新失败', life: 4000 });
   } finally {

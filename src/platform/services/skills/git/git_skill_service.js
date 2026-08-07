@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, rm, readdir, stat, readFile } from "node:fs/promises";
+import { stat, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { GitSkillRepository } from "./git_skill_repository.js";
@@ -75,69 +75,55 @@ export class GitSkillService {
     const subDir = payload.subDir || "";
     const displayName = payload.displayName || this._extractRepoName(gitUrl);
 
-    // 创建临时目录并执行 git clone
-    const tempDir = path.join(this.rootDir, "tmp", `git-clone-${gitSkillId}`);
-    await mkdir(tempDir, { recursive: true });
+    // 直接在最终技能目录中 clone，不需要临时目录和复制过程
+    const targetDir = this.repository.getSkillDir(gitSkillId);
+    await this._gitClone(gitUrl, branch, targetDir);
 
-    try {
-      // 执行 git clone
-      await this._gitClone(gitUrl, branch, tempDir);
-
-      // 确定要导入的源目录（可能指定了子目录）
-      const sourceDir = subDir ? path.join(tempDir, subDir) : tempDir;
-      if (!existsSync(sourceDir)) {
+    // 验证 SKILL.md 存在（考虑 subDir）
+    const skillMdPath = subDir ? path.join(targetDir, subDir, "SKILL.md") : path.join(targetDir, "SKILL.md");
+    if (!existsSync(skillMdPath)) {
+      const errorDir = subDir ? path.join(targetDir, subDir) : targetDir;
+      if (subDir && !existsSync(errorDir)) {
         throw new Error("git_subdir_not_found");
       }
-
-      // 验证源目录包含 SKILL.md
-      if (!existsSync(path.join(sourceDir, "SKILL.md"))) {
-        throw new Error("git_skill_md_not_found");
-      }
-
-      // 将文件复制到 git 技能目录
-      const targetDir = this.repository.getSkillDir(gitSkillId);
-      await mkdir(targetDir, { recursive: true });
-      await this._copyDirectoryContents(sourceDir, targetDir);
-
-      // 获取 commit 信息
-      const commitInfo = await this._getCommitInfo(tempDir);
-
-      // 写入元信息
-      const meta = {
-        gitUrl,
-        branch,
-        subDir,
-        commitId: commitInfo.commitId,
-        commitDate: commitInfo.commitDate,
-        importedAt: new Date().toISOString()
-      };
-      await this.repository.writeMeta(gitSkillId, meta);
-
-      // 从 SKILL.md 读取 description
-      const description = await this._readSkillDescription(gitSkillId);
-      const packageFiles = await this._collectPackageFiles(gitSkillId);
-
-      // 注册到技能索引
-      const record = await this.skillsRepository.saveSkillRecord(this._buildRecord({
-        gitSkillId,
-        skillId,
-        displayName,
-        description,
-        packageFiles,
-        gitUrl,
-        branch,
-        commitId: commitInfo.commitId,
-        status: "disabled"
-      }));
-
-      return {
-        skill: record,
-        tree: await this.repository.readFileTree(gitSkillId)
-      };
-    } finally {
-      // 清理临时目录
-      await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+      throw new Error("git_skill_md_not_found");
     }
+
+    // 获取 commit 信息（直接从技能目录读取）
+    const commitInfo = await this._getCommitInfo(targetDir);
+
+    // 写入元信息
+    const meta = {
+      gitUrl,
+      branch,
+      subDir,
+      commitId: commitInfo.commitId,
+      commitDate: commitInfo.commitDate,
+      importedAt: new Date().toISOString()
+    };
+    await this.repository.writeMeta(gitSkillId, meta);
+
+    // 从 SKILL.md 读取 description
+    const description = await this._readSkillDescription(gitSkillId);
+    const packageFiles = await this._collectPackageFiles(gitSkillId);
+
+    // 注册到技能索引
+    const record = await this.skillsRepository.saveSkillRecord(this._buildRecord({
+      gitSkillId,
+      skillId,
+      displayName,
+      description,
+      packageFiles,
+      gitUrl,
+      branch,
+      commitId: commitInfo.commitId,
+      status: "disabled"
+    }));
+
+    return {
+      skill: record,
+      tree: await this.repository.readFileTree(gitSkillId)
+    };
   }
 
   /**
@@ -317,31 +303,6 @@ export class GitSkillService {
   }
 
   /**
-   * 复制目录内容到目标目录。
-   * @param {string} sourceDir
-   * @param {string} targetDir
-   * @returns {Promise<void>}
-   */
-  async _copyDirectoryContents(sourceDir, targetDir) {
-    const entries = await readdir(sourceDir, { withFileTypes: true });
-    for (const entry of entries) {
-      // 跳过 .git 目录
-      if (entry.name === ".git") {
-        continue;
-      }
-      const sourcePath = path.join(sourceDir, entry.name);
-      const targetPath = path.join(targetDir, entry.name);
-      if (entry.isDirectory()) {
-        await mkdir(targetPath, { recursive: true });
-        await this._copyDirectoryContents(sourcePath, targetPath);
-      } else {
-        const { copyFile } = await import("node:fs/promises");
-        await copyFile(sourcePath, targetPath);
-      }
-    }
-  }
-
-  /**
    * 通过 git 地址查找已导入的技能。
    * @param {string} gitUrl
    * @returns {Promise<any|null>}
@@ -427,7 +388,9 @@ export class GitSkillService {
    */
   async _readSkillDescription(gitSkillId) {
     try {
-      const content = await this.repository.readFile(gitSkillId, "SKILL.md");
+      const meta = await this.repository.readMeta(gitSkillId);
+      const skillMdPath = meta?.subDir ? `${meta.subDir}/SKILL.md` : "SKILL.md";
+      const content = await this.repository.readFile(gitSkillId, skillMdPath);
       if (!content) {
         return "";
       }
@@ -454,7 +417,12 @@ export class GitSkillService {
     for (const line of lines) {
       const match = line.match(/^\s*description:\s*(.*)$/);
       if (match) {
-        return match[1].trim();
+        let desc = match[1].trim();
+        // 剥离首尾成对的引号（" 或 '）
+        if ((desc.startsWith('"') && desc.endsWith('"')) || (desc.startsWith("'") && desc.endsWith("'"))) {
+          desc = desc.slice(1, -1);
+        }
+        return desc;
       }
     }
     return "";
@@ -466,12 +434,28 @@ export class GitSkillService {
    * @returns {Promise<string[]>}
    */
   async _collectPackageFiles(gitSkillId) {
-    const tree = await this.repository.readFileTree(gitSkillId);
+    const meta = await this.repository.readMeta(gitSkillId);
+    let tree = await this.repository.readFileTree(gitSkillId);
+
+    // 如果指定了 subDir，导航到子目录子树并 strip 前缀
+    let stripPrefix = "";
+    if (meta?.subDir) {
+      stripPrefix = meta.subDir + "/";
+      const parts = meta.subDir.split("/");
+      for (const part of parts) {
+        const child = tree.find((n) => n.name === part && n.type === "directory");
+        if (!child) {
+          return [];
+        }
+        tree = child.children || [];
+      }
+    }
+
     const output = [];
     const visit = (nodes) => {
       for (const node of nodes) {
         if (node.type === "file") {
-          output.push(node.path);
+          output.push(stripPrefix ? node.path.slice(stripPrefix.length) : node.path);
           continue;
         }
         visit(node.children || []);
