@@ -1,0 +1,10 @@
+[test]
+# 只测试 test 目录下的文件，排除数据目录
+include = ["test/**/*"]
+exclude = [
+  "agent-society-data/**/*",
+  "agent-society-data-3001/**/*",
+  "node_modules/**/*",
+  ".tmp/**/*",
+  "coverage/**/*"
+]

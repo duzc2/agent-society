@@ -1,0 +1,65 @@
+{
+  "promptsDir": "config/prompts",
+  "workspacesDir": "data/workspaces",
+  "runtimeDir": "data/runtime/state",
+  "loggingConfigPath": "config/logging.json",
+  "maxSteps": 200,
+  "maxToolRounds": 20000,
+  "httpPort": 3000,
+  "llm": {
+    "baseURL": "http://127.0.0.1:1234/v1",
+    "model": "zai-org/glm-4.6v-flash",
+    "apiKey": "NOT_NEEDED",
+    "maxConcurrentRequests": 2,
+    "maxTokens": 60960,
+    "timeout": 1800000,
+    "stream": true,
+    "capabilityTags": ["text", "tool_calling"],
+    "capabilities": {
+      "input": ["text"],
+      "output": ["text", "tool_calling"]
+    }
+  },
+  "contextLimit": {
+    "maxTokens": 60960,
+    "warningThreshold": 0.6,
+    "criticalThreshold": 0.7,
+    "hardLimitThreshold": 0.8
+  },
+  "skills": {
+    "enabled": true,
+    "providers": {
+      "modelscope": {
+        "enabled": true,
+        "baseUrl": "https://modelscope.cn",
+        "allowPublicInstall": true
+      }
+    },
+    "runtime": {
+      "bunPath": "",
+      "pythonPath": "",
+      "projectPythonVenvDir": "Python",
+      "allowSystemPythonFallback": true
+    }
+  },
+  "moodColors": { "enabled": true },
+  "agentMemory": {
+    "enabled": true,
+    "maxEntries": 10000,
+    "llm": {
+      "provider": "openai",
+      "baseUrl": "http://127.0.0.1:1234/v1",
+      "apiKey": "NOT_NEEDED",
+      "model": "zai-org/glm-4.6v-flash",
+      "temperature": 0.3
+    },
+    "embedding": {
+      "modelPath": "models/qwen3-embedding.gguf",
+      "dimensions": 1024
+    },
+    "recall": {
+      "limit": 10,
+      "minConfidence": 0.7
+    }
+  }
+}

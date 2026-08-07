@@ -1,0 +1,531 @@
+/* SSH 管理面板样式 */
+
+.ssh-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-1, #333);
+}
+
+/* ===== 顶栏 ===== */
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border, #e0e0e0);
+  background: var(--surface-2, #f5f5f5);
+  flex-shrink: 0;
+}
+.header-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* ===== 紧凑统计条 ===== */
+.stat-bar {
+  display: flex;
+  padding: 8px 14px;
+  gap: 0;
+  border-bottom: 1px solid var(--border-weak, #f0f0f0);
+  background: var(--surface-1, #fff);
+  flex-shrink: 0;
+}
+.stat-item {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+  padding: 2px 0;
+}
+.stat-num {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--primary, #4caf50);
+}
+.stat-text {
+  font-size: 11px;
+  color: var(--text-3, #999);
+}
+
+/* ===== 标签栏 ===== */
+.tab-bar {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 2px solid var(--border, #e0e0e0);
+  background: var(--surface-1, #fff);
+}
+.tab-btn {
+  flex: 1;
+  padding: 8px 0;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-3, #999);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.15s;
+}
+.tab-btn:hover {
+  color: var(--text-1, #333);
+}
+.tab-btn.active {
+  color: var(--primary, #4caf50);
+  border-bottom-color: var(--primary, #4caf50);
+}
+
+/* ===== 标签内容 ===== */
+.tab-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+}
+.tab-panel {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+.tab-panel.active {
+  display: flex;
+}
+
+/* ===== 运行状态布局 ===== */
+.status-layout {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 10px 14px;
+  gap: 10px;
+}
+.status-block {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.status-block.flex-1 {
+  flex: 1;
+}
+
+.block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+.block-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-1, #333);
+}
+
+.scroll-area {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.scroll-area.flex-1 {
+  flex: 1;
+}
+
+/* ===== 列表项 ===== */
+.list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-2, #f8f8f8);
+  border: 1px solid var(--border-weak, #f0f0f0);
+  transition: background 0.15s;
+}
+.list-item:hover {
+  background: var(--surface-3, #f0f0f0);
+}
+.item-content {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.item-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-3, #999);
+}
+.item-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* ===== 配置布局 ===== */
+.config-layout {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 10px 14px;
+  gap: 10px;
+}
+.config-col-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  flex-shrink: 0;
+}
+.config-group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2, #666);
+  margin: 0;
+  flex-shrink: 0;
+}
+
+/* 参数双列紧凑网格 */
+.params-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 16px;
+}
+.param-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.param-item > label {
+  font-size: 11px;
+  color: var(--text-3, #999);
+  white-space: nowrap;
+}
+.param-item > input[type="number"] {
+  width: 80px;
+  padding: 3px 6px;
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+  background: var(--surface-1, #fff);
+  color: var(--text-1, #333);
+  text-align: right;
+  box-sizing: border-box;
+}
+.param-item > input[type="number"]:focus {
+  outline: none;
+  border-color: var(--primary, #4caf50);
+  box-shadow: 0 0 0 2px rgba(76,175,80,0.1);
+}
+
+/* 主机卡片列表 */
+.hosts-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.host-card {
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 8px;
+  background: var(--surface-2, #f8f8f8);
+  overflow: hidden;
+}
+.host-card-row {
+  display: flex;
+  gap: 0;
+}
+.host-card-row + .host-card-row {
+  border-top: 1px solid var(--border-weak, #f0f0f0);
+}
+.host-card-split {
+  display: flex;
+}
+.host-card-split > .host-card-field {
+  flex: 1;
+}
+.host-card-split > .host-card-field + .host-card-field {
+  border-left: 1px solid var(--border-weak, #f0f0f0);
+}
+.host-card-field {
+  flex: 1;
+  min-width: 0;
+}
+.host-card-field-sm {
+  flex: none;
+  width: 80px;
+}
+
+.host-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-3, #ededed);
+}
+.host-card-name {
+  font-weight: 600;
+}
+
+.host-card-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  font-size: 12px;
+  font-family: inherit;
+  background: transparent;
+  color: var(--text-1, #333);
+  box-sizing: border-box;
+  outline: none;
+}
+.host-card-input:focus {
+  background: rgba(76, 175, 80, 0.05);
+  box-shadow: inset 0 0 0 1px var(--primary, #4caf50);
+}
+.host-card-input[type="number"] {
+  text-align: center;
+  font-family: monospace;
+}
+.host-card-input[type="password"] {
+  font-family: monospace;
+}
+.host-card-input::placeholder {
+  color: var(--text-4, #bbb);
+}
+
+.hosts-empty-row {
+  text-align: center;
+  padding: 20px !important;
+}
+
+/* 配置操作栏 */
+.config-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border, #e0e0e0);
+  flex-shrink: 0;
+}
+.config-actions .config-result {
+  flex: 1;
+  margin: 0;
+}
+
+/* ===== 通用组件 ===== */
+
+/* 切换开关 */
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-3, #999);
+  cursor: pointer;
+}
+.toggle.small {
+  font-size: 10px;
+}
+.toggle input[type="checkbox"] {
+  cursor: pointer;
+}
+
+/* 按钮 */
+.btn-primary {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 5px;
+  background: var(--primary, #4caf50);
+  color: white;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: filter 0.15s;
+}
+.btn-primary:hover {
+  filter: brightness(1.05);
+}
+.btn-secondary {
+  padding: 5px 12px;
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 5px;
+  background: var(--surface-2, #f5f5f5);
+  color: var(--text-2, #666);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-secondary:hover {
+  background: var(--surface-3, #e8e8e8);
+}
+.btn-danger {
+  padding: 5px 12px;
+  border: none;
+  border-radius: 5px;
+  background: var(--danger, #f44336);
+  color: white;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-danger:hover {
+  filter: brightness(1.05);
+}
+.btn-danger-text {
+  padding: 3px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--danger, #f44336);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.btn-danger-text:hover {
+  background: rgba(244, 67, 54, 0.08);
+}
+.btn-sm {
+  padding: 3px 10px;
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 4px;
+  background: var(--surface-2, #f5f5f5);
+  color: var(--text-2, #666);
+  font-size: 11px;
+  cursor: pointer;
+}
+.btn-sm:hover {
+  background: var(--surface-3, #e8e8e8);
+}
+
+/* 徽章 */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.badge.connected    { background: rgba(34,197,94,0.15);  color: #16a34a; }
+.badge.disconnected { background: rgba(239,68,68,0.15);  color: #dc2626; }
+.badge.pending      { background: rgba(245,158,11,0.15); color: #d97706; }
+.badge.transferring { background: rgba(59,130,246,0.15); color: #2563eb; }
+.badge.completed    { background: rgba(34,197,94,0.15);  color: #16a34a; }
+.badge.failed       { background: rgba(239,68,68,0.15);  color: #dc2626; }
+.badge.cancelled    { background: rgba(156,163,175,0.15); color: #6b7280; }
+
+/* 进度条 */
+.progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.progress-bar {
+  flex: 1;
+  height: 5px;
+  background: var(--border, #e0e0e0);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--primary, #4caf50);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.progress-text {
+  font-size: 10px;
+  color: var(--text-3, #999);
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+}
+
+/* 等宽字体 */
+.mono {
+  font-family: var(--font-mono, monospace);
+}
+
+/* 状态文本 */
+.loading-text, .empty-text, .error-text {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-3, #999);
+  font-size: 12px;
+}
+.error-text {
+  color: var(--danger, #f44336);
+}
+
+/* 配置结果消息 */
+.config-result {
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.config-result-success {
+  background: rgba(34,197,94,0.1);
+  color: #16a34a;
+}
+.config-result-error {
+  background: rgba(239,68,68,0.1);
+  color: #dc2626;
+}
+
+/* ===== 滚动条 ===== */
+.scroll-area::-webkit-scrollbar,
+.hosts-list::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.scroll-area::-webkit-scrollbar-thumb,
+.hosts-list::-webkit-scrollbar-thumb {
+  background: var(--border, #e0e0e0);
+  border-radius: 3px;
+}
+
+/* ===== 响应式 ===== */
+@media (max-width: 600px) {
+  .config-layout {
+    flex-direction: column;
+  }
+  .stat-num {
+    font-size: 14px;
+  }
+  .stat-text {
+    font-size: 10px;
+  }
+  .list-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .item-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

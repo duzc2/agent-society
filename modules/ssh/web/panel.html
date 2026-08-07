@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SSH 连接与传输管理</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <div class="ssh-panel" id="ssh-panel">
+
+    <!-- 顶栏 -->
+    <div class="panel-header">
+      <span class="header-title">SSH 管理</span>
+      <label class="toggle">
+        <input id="ssh-auto-refresh" type="checkbox" checked>
+        <span>自动刷新</span>
+      </label>
+    </div>
+
+    <!-- 紧凑统计条 -->
+    <div class="stat-bar" id="stat-bar">
+      <div class="stat-item">
+        <span class="stat-num" id="stat-hosts">-</span>
+        <span class="stat-text">主机</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-num" id="stat-connections">-</span>
+        <span class="stat-text">连接</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-num" id="stat-transfers">-</span>
+        <span class="stat-text">传输</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-num" id="stat-active">-</span>
+        <span class="stat-text">进行中</span>
+      </div>
+    </div>
+
+    <!-- 标签栏 -->
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="status" onclick="window._sshSwitchTab('status')">运行状态</button>
+      <button class="tab-btn" data-tab="config" onclick="window._sshSwitchTab('config')">模块配置</button>
+    </div>
+
+    <!-- 标签内容 -->
+    <div class="tab-content">
+
+      <!-- 运行状态 -->
+      <div class="tab-panel active" id="tab-status">
+        <div class="status-layout">
+          <!-- 连接 -->
+          <div class="status-block">
+            <div class="block-header">
+              <span class="block-title">连接</span>
+            </div>
+            <div class="scroll-area" id="connections-list">
+              <div class="loading-text">加载中...</div>
+            </div>
+          </div>
+          <!-- 传输 -->
+          <div class="status-block flex-1">
+            <div class="block-header">
+              <span class="block-title">文件传输</span>
+              <label class="toggle small">
+                <input id="ssh-show-completed" type="checkbox">
+                <span>显示已完成</span>
+              </label>
+            </div>
+            <div class="scroll-area flex-1" id="transfers-list">
+              <div class="loading-text">加载中...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 模块配置 -->
+      <div class="tab-panel" id="tab-config">
+        <div class="config-layout">
+          <h4 class="config-group-title">连接参数</h4>
+          <div class="params-grid">
+            <div class="param-item">
+              <label for="cfg-maxConnections">最大连接数</label>
+              <input id="cfg-maxConnections" type="number" min="1" max="100" value="10">
+            </div>
+            <div class="param-item">
+              <label for="cfg-connectionTimeout">连接超时 (ms)</label>
+              <input id="cfg-connectionTimeout" type="number" min="1000" max="300000" value="30000">
+            </div>
+            <div class="param-item">
+              <label for="cfg-commandTimeout">命令超时 (ms)</label>
+              <input id="cfg-commandTimeout" type="number" min="1000" max="300000" value="30000">
+            </div>
+            <div class="param-item">
+              <label for="cfg-idleTimeout">空闲超时 (ms)</label>
+              <input id="cfg-idleTimeout" type="number" min="1000" max="3600000" value="300000">
+            </div>
+            <div class="param-item">
+              <label for="cfg-keepaliveInterval">心跳间隔 (ms)</label>
+              <input id="cfg-keepaliveInterval" type="number" min="1000" max="300000" value="10000">
+            </div>
+            <div class="param-item">
+              <label for="cfg-maxOutputSize">最大输出 (bytes)</label>
+              <input id="cfg-maxOutputSize" type="number" min="1024" max="1073741824" value="10485760">
+            </div>
+            <div class="param-item">
+              <label for="cfg-verifyHostKey">验证主机密钥</label>
+              <label class="toggle">
+                <input id="cfg-verifyHostKey" type="checkbox">
+                <span>启用</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="config-col-header">
+            <h4 class="config-group-title">主机列表</h4>
+            <button class="btn-sm" id="btn-add-host" onclick="window._sshAddHost()">+ 添加</button>
+          </div>
+          <div class="hosts-list" id="hosts-list">
+            <div class="hosts-empty-row empty-text">暂无主机，点击 + 添加</div>
+          </div>
+        </div>
+
+        <!-- 配置操作栏 -->
+        <div class="config-actions">
+          <span id="config-result" class="config-result" style="display:none"></span>
+          <button class="btn-secondary" id="btn-load-config" onclick="window._sshLoadConfig()">加载</button>
+          <button class="btn-primary" id="btn-save-config" onclick="window._sshSaveConfig()">保存配置</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="panel.js"></script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+{
+  "promptsDir": "config/prompts",
+  "workspacesDir": "data/workspaces",
+  "runtimeDir": "data/runtime/state",
+  "loggingConfigPath": "config/logging.json",
+  "maxSteps": 200,
+  "maxToolRounds": 20000,
+  "llm": {
+    "provider": "openai",
+    "baseURL": "http://127.0.0.1:1234/v1",
+    "model": "zai-org/glm-4.6v-flash",
+    "apiKey": "NOT_NEEDED",
+    "maxTokens": 4096,
+    "stream": true
+  },
+  "contextLimit": {
+    "warningThreshold": 0.6,
+    "criticalThreshold": 0.7,
+    "hardLimitThreshold": 0.8
+  },
+  "conversation": {},
+  "agentMemory": {
+    "enabled": false,
+    "maxEntries": 10000,
+    "recall": {
+      "limit": 10,
+      "minConfidence": 0.7
+    },
+    "llm": {
+      "_comment": "方式1：本地模型（配置 modelPath），方式2：OpenAI API（provider=openai），方式3：Anthropic API（provider=anthropic）",
+      "provider": "openai",
+      "baseUrl": "http://127.0.0.1:1234/v1",
+      "apiKey": "NOT_NEEDED",
+      "model": "gpt-4",
+      "temperature": 0.3
+    },
+    "embedding": {
+      "_comment": "方式1：本地模型（配置 modelPath），方式2：OpenAI API（provider=openai）",
+      "provider": "openai",
+      "baseUrl": "http://127.0.0.1:1234/v1",
+      "apiKey": "NOT_NEEDED",
+      "model": "text-embedding-3-small",
+      "dimensions": 1536
+    }
+  }
+}

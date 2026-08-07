@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 背景渐变 -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1f2e"/>
+      <stop offset="100%" style="stop-color:#2d3548"/>
+    </linearGradient>
+    
+    <!-- 中央节点渐变 -->
+    <radialGradient id="centerGrad" cx="30%" cy="30%" r="70%">
+      <stop offset="0%" style="stop-color:#64b5f6"/>
+      <stop offset="100%" style="stop-color:#4285f4"/>
+    </radialGradient>
+    
+    <!-- 绿色节点 -->
+    <radialGradient id="greenGrad" cx="30%" cy="30%" r="70%">
+      <stop offset="0%" style="stop-color:#81c784"/>
+      <stop offset="100%" style="stop-color:#34a853"/>
+    </radialGradient>
+    
+    <!-- 黄色节点 -->
+    <radialGradient id="yellowGrad" cx="30%" cy="30%" r="70%">
+      <stop offset="0%" style="stop-color:#ffd54f"/>
+      <stop offset="100%" style="stop-color:#fbbc04"/>
+    </radialGradient>
+    
+    <!-- 红色节点 -->
+    <radialGradient id="redGrad" cx="30%" cy="30%" r="70%">
+      <stop offset="0%" style="stop-color:#ef5350"/>
+      <stop offset="100%" style="stop-color:#ea4335"/>
+    </radialGradient>
+    
+    <!-- 紫色节点 -->
+    <radialGradient id="purpleGrad" cx="30%" cy="30%" r="70%">
+      <stop offset="0%" style="stop-color:#ba68c8"/>
+      <stop offset="100%" style="stop-color:#ab47bc"/>
+    </radialGradient>
+    
+    <!-- 阴影滤镜 -->
+    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+    
+    <!-- 发光滤镜 -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- 背景 -->
+  <rect width="256" height="256" rx="48" fill="url(#bgGrad)"/>
+  
+  <!-- 连接线（先绘制，让节点在上面）-->
+  <g stroke="#666" stroke-width="2" opacity="0.5">
+    <!-- 中心到周围节点的线 -->
+    <line x1="128" y1="128" x2="128" y2="48"/>
+    <line x1="128" y1="128" x2="197" y2="78"/>
+    <line x1="128" y1="128" x2="197" y2="178"/>
+    <line x1="128" y1="128" x2="128" y2="208"/>
+    <line x1="128" y1="128" x2="59" y2="178"/>
+    <line x1="128" y1="128" x2="59" y2="78"/>
+    
+    <!-- 外围节点之间的连接（形成六边形） -->
+    <line x1="128" y1="48" x2="197" y2="78" opacity="0.3"/>
+    <line x1="197" y1="78" x2="197" y2="178" opacity="0.3"/>
+    <line x1="197" y1="178" x2="128" y2="208" opacity="0.3"/>
+    <line x1="128" y1="208" x2="59" y2="178" opacity="0.3"/>
+    <line x1="59" y1="178" x2="59" y2="78" opacity="0.3"/>
+    <line x1="59" y1="78" x2="128" y2="48" opacity="0.3"/>
+  </g>
+  
+  <!-- 外围节点 -->
+  <!-- 上方 - 蓝色 -->
+  <circle cx="128" cy="48" r="18" fill="url(#centerGrad)" filter="url(#shadow)"/>
+  <circle cx="122" cy="42" r="6" fill="#fff" opacity="0.4"/>
+  
+  <!-- 右上 - 绿色 -->
+  <circle cx="197" cy="78" r="15" fill="url(#greenGrad)" filter="url(#shadow)"/>
+  <circle cx="192" cy="73" r="5" fill="#fff" opacity="0.4"/>
+  
+  <!-- 右下 - 黄色 -->
+  <circle cx="197" cy="178" r="15" fill="url(#yellowGrad)" filter="url(#shadow)"/>
+  <circle cx="192" cy="173" r="5" fill="#fff" opacity="0.4"/>
+  
+  <!-- 下方 - 红色 -->
+  <circle cx="128" cy="208" r="15" fill="url(#redGrad)" filter="url(#shadow)"/>
+  <circle cx="122" cy="203" r="5" fill="#fff" opacity="0.4"/>
+  
+  <!-- 左下 - 紫色 -->
+  <circle cx="59" cy="178" r="15" fill="url(#purpleGrad)" filter="url(#shadow)"/>
+  <circle cx="54" cy="173" r="5" fill="#fff" opacity="0.4"/>
+  
+  <!-- 左上 - 绿色 -->
+  <circle cx="59" cy="78" r="15" fill="url(#greenGrad)" filter="url(#shadow)"/>
+  <circle cx="54" cy="73" r="5" fill="#fff" opacity="0.4"/>
+  
+  <!-- 中央 Root 节点 -->
+  <g filter="url(#glow)">
+    <!-- 外发光 -->
+    <circle cx="128" cy="128" r="50" fill="#4285f4" opacity="0.2"/>
+    <circle cx="128" cy="128" r="42" fill="#4285f4" opacity="0.3"/>
+    
+    <!-- 主体 -->
+    <circle cx="128" cy="128" r="36" fill="url(#centerGrad)" filter="url(#shadow)"/>
+    
+    <!-- 内圈 -->
+    <circle cx="128" cy="128" r="25" fill="#64b5f6" opacity="0.5"/>
+    
+    <!-- 高光 -->
+    <ellipse cx="118" cy="118" rx="12" ry="10" fill="#fff" opacity="0.5"/>
+  </g>
+</svg>

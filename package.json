@@ -1,0 +1,63 @@
+{
+  "name": "agent-society-mvp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node start-wrapper.mjs",
+    "demo": "node test/demo.js",
+    "test": "node --test --experimental-test-module-mocks test/**/*.test.js",
+    "test:live": "node scripts/run-live-tests.mjs",
+    "test:live:only": "node --test --test-timeout=120000 --test-force-exit test/live/*.live.js",
+    "test:ci": "npx c8 --reporter=lcov node --test --experimental-test-module-mocks test/**/*.test.js",
+    "test:coverage": "node --test --experimental-test-module-mocks --experimental-test-coverage test/**/*.test.js",
+    "test:coverage:check": "npx c8 --reporter=lcov node --test --experimental-test-module-mocks test/**/*.test.js && node scripts/check-coverage.js",
+    "lint": "eslint src test",
+    "lint:fix": "eslint src test --fix",
+    "typecheck": "tsc --noEmit",
+    "package": "scripts/win/pack.cmd",
+    "build:v3": "bun scripts/build-web.mjs v3",
+    "build:mobile": "bun scripts/build-web.mjs mobile",
+    "build:web": "bun scripts/build-web.mjs",
+    "build:exe": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win/build_exe.ps1",
+    "build:installer": "echo Please compile scripts/win/setup.iss with Inno Setup Compiler",
+    "audit": "npm audit --production"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.78",
+    "@ai-sdk/open-responses": "^1.0.16",
+    "@ai-sdk/openai": "^3.0.64",
+    "@anthropic-ai/sdk": "^0.96.0",
+    "@arcships/light-ocr": "^0.3.0",
+    "@hono/node-server": "^2.0.3",
+    "@napi-rs/canvas": "^0.1.69",
+    "ai": "^6.0.183",
+    "file-type": "^22.0.1",
+    "hmemory": "git+https://gitee.com/duzc2/hmemory.git#f4800ae42431a7b424b9e50544692bc5914eaf15",
+    "hono": "^4.12.22",
+    "iconv-lite": "^0.7.2",
+    "js-yaml": "^4.1.1",
+    "llama-cpp-provider": "git+https://gitee.com/duzc2/local-llama-provider.git#d3e3aebeca2d3cf5aba474c8521f113ac9b9c9ed",
+    "officeparser": "^7.2.1",
+    "openai": "^6.38.0",
+    "puppeteer-core": "^25.0.2",
+    "ssh2": "^1.17.0",
+    "unpdf": "^1.6.2"
+  },
+  "overrides": {
+    "simple-git": ">=3.36.0",
+    "tar": ">7.5.10",
+    "basic-ftp": ">5.3.0",
+    "uuid": ">13.0.0",
+    "ip-address": ">10.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^25.8.0",
+    "c8": "^10.1.3",
+    "eslint": "^10.4.0",
+    "fast-check": "^4.8.0",
+    "globals": "^17.6.0",
+    "typescript": "^6.0.3"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "retrieval": {
+    "enabled": true,
+    "minConfidence": 0.6,
+    "maxContentLength": 400
+  },
+  "extractionTrigger": {
+    "minMessageCount": 20,
+    "minCharCount": 5000,
+    "minIntervalMinutes": 30
+  },
+  "maintenanceTrigger": {
+    "minMessageCount": 100,
+    "minIntervalMinutes": 240,
+    "minEntryCount": 20
+  },
+  "autoCreateFolders": true
+}

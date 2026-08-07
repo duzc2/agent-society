@@ -1,0 +1,119 @@
+/**
+ * 核心领域模型类型定义
+ */
+
+export interface User {
+  id: string;
+  name: string;
+  avatar?: string;
+}
+
+export interface Organization {
+  id: string;
+  name: string;
+  initial: string;
+  role?: string; // 岗位名称
+  description?: string;
+  sortOrder?: number; // 排序顺序
+}
+
+/**
+ * 智能体计算状态。
+ * 前端保留原始状态，用于跨组织判断某个组织内是否仍有未 idle 的智能体。
+ */
+export type AgentComputeStatus =
+  | 'idle'
+  | 'waiting_llm'
+  | 'processing'
+  | 'computing'
+  | 'stopping'
+  | 'stopped'
+  | 'terminating'
+  | string;
+
+export interface Agent {
+  id: string;
+  orgId: string;
+  parentAgentId?: string | null;
+  name: string;
+  avatar?: string;
+  role: string;
+  roleId?: string | null;
+  status: 'online' | 'offline' | 'busy';
+  computeStatus?: AgentComputeStatus;
+  computePhase?: string | null;
+  lastSeen?: number;
+}
+
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface Message {
+  id: string;
+  agentId: string;
+  senderId: string; // User ID or Agent ID
+  senderType: 'user' | 'agent';
+  type?: string; // 消息类型，如 tool_call, text 等
+  receiverId?: string;
+  content: string;
+  timestamp: number;
+  status: 'sending' | 'sent' | 'error';
+  isThinking?: boolean;
+  taskId?: string; // 关联的任务 ID
+  reasoning?: string; // 思考过程
+  toolCall?: {
+    name: string;
+    args: any;
+    result: any;
+  };
+  usage?: TokenUsage; // Token 使用量
+  payload?: any; // 原始 payload，用于提取文件等额外数据
+  memoryContext?: string; // AgentMemory 召回结果
+  knowledgeContext?: string; // KnowledgeTree 检索结果
+  scheduledDeliveryTime?: string; // 预计送达时间（ISO 字符串）
+  deliveredAt?: string; // 实际投递时间
+  sendTime?: string; // 原始发送时间（接收方视角）
+}
+
+export interface Tab {
+  id: string;
+  type: 'org' | 'tool';
+  title: string;
+  params?: any;
+}
+
+/**
+ * 组织模板
+ * 对应 org 目录下的一个文件夹
+ */
+export interface OrgTemplate {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+/**
+ * 模板文件内容
+ * 包含 info.md 和 org.md 的内容
+ */
+export interface TemplateContent {
+  /** info.md 文件内容 */
+  info: string;
+  /** org.md 文件内容 */
+  org: string;
+}
+
+/**
+ * 待办事项
+ */
+export interface TodoItem {
+  id: string;
+  title: string;
+  priority: 'high' | 'medium' | 'low';
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  createdAt: string;
+  updatedAt: string;
+}

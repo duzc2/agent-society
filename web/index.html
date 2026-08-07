@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>智能体工作台</title>
+  <script>
+    (function() {
+      var isMobile = window.innerWidth <= 768;
+      var currentPath = window.location.pathname;
+
+      // 避免重复跳转
+      if (isMobile) {
+        // 移动端：跳转到 mobile dist
+        if (currentPath.indexOf('/web/mobile/') === -1) {
+          window.location.replace('/web/mobile/dist/index.html');
+        }
+      } else {
+        // 桌面端：跳转到 v3 dist
+        if (currentPath.indexOf('/web/v3/') === -1) {
+          window.location.replace('/web/v3/dist/index.html');
+        }
+      }
+    })();
+  </script>
+</head>
+<body>
+  <div style="padding:16px;font-family:system-ui,Segoe UI,Arial;">
+    正在跳转到合适版本…
+    <div style="margin-top:8px;">
+      <a href="/web/v3/dist/index.html">桌面版</a>
+      &nbsp;|&nbsp;
+      <a href="/web/mobile/dist/index.html">移动版</a>
+    </div>
+  </div>
+</body>
+</html>

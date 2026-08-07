@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>命令执行管理</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <div class="app">
+    <!-- 头部 -->
+    <header class="header">
+      <h1>&#x1F4BB; 命令执行管理</h1>
+      <p>管理本地命令执行策略，控制 AI 可执行的命令范围</p>
+    </header>
+
+    <!-- 说明卡片 -->
+    <div class="info-card">
+      <div class="info-item">
+        <span class="badge allow">白名单</span>
+        <span>匹配的命令直接放行，无需确认</span>
+      </div>
+      <div class="info-item">
+        <span class="badge deny">黑名单</span>
+        <span>匹配的命令自动拒绝，AI 不可执行</span>
+      </div>
+      <div class="info-item">
+        <span class="badge unknown">未知</span>
+        <span>不在任一列表中的命令，需用户确认</span>
+      </div>
+    </div>
+
+    <!-- 默认策略 -->
+    <section class="section">
+      <div class="section-head">
+        <h2>默认策略</h2>
+        <span class="section-hint">所有组织通用。下方可添加组织独立策略进行覆盖。</span>
+      </div>
+      <div class="card">
+        <div class="card-row">
+          <div class="half">
+            <label>白名单 · 允许执行</label>
+            <div class="entries-wrap" id="dw-entries"></div>
+            <button class="entry-add-btn" id="dw-add">+ 添加</button>
+          </div>
+          <div class="half">
+            <label>黑名单 · 禁止执行</label>
+            <div class="entries-wrap" id="db-entries"></div>
+            <button class="entry-add-btn" id="db-add">+ 添加</button>
+          </div>
+        </div>
+        <div class="card-foot">
+          <span class="msg" id="dm"></span>
+          <button class="btn" id="saveDefaults" type="button">保存</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 组织独立策略（覆盖默认值） -->
+    <section class="section">
+      <div class="section-head">
+        <h2>组织独立策略</h2>
+        <span class="section-hint" id="orgCountHint">暂无，将沿用默认策略</span>
+      </div>
+      <div id="orgs"><!-- 动态渲染 --></div>
+    </section>
+
+    <!-- 加载与提示 -->
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+    </div>
+    <div class="toast-wrap" id="toastWrap"></div>
+
+    <!-- 删除确认弹窗 -->
+    <div class="modal-overlay" id="delModal">
+      <div class="modal-box">
+        <p class="modal-title">确认删除组织策略</p>
+        <p class="modal-body">
+          确定删除 <strong id="delModalOrg"></strong> 的独立策略？<br>
+          <span class="modal-hint">删除后将回退到全局默认策略。</span>
+        </p>
+        <div class="modal-foot">
+          <button class="btn btn-sm" id="delModalCancel" type="button">取消</button>
+          <button class="btn btn-sm btn-danger" id="delModalConfirm" type="button">删除</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="panel.js"></script>
+</body>
+</html>

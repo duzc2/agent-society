@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chrome 浏览器管理</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <div class="chrome-panel" id="chrome-panel">
+    <div class="panel-layout">
+      <!-- 左侧：浏览器列表 -->
+      <div class="panel-sidebar">
+        <div class="sidebar-header">
+          <span class="header-title">浏览器实例</span>
+        </div>
+        <div class="browser-list" id="browser-list">
+          <div class="loading-text">加载中...</div>
+        </div>
+        <!-- 代理设置 -->
+        <div class="settings-section" id="settings-section">
+          <div class="settings-header">
+            <span class="header-title">代理设置</span>
+            <span class="settings-status" id="settings-status"></span>
+          </div>
+          <div class="settings-body">
+            <div class="setting-row toggle-row">
+              <span class="setting-label">启用代理</span>
+              <label class="toggle-switch">
+                <input type="checkbox" id="proxy-enabled-checkbox">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <input type="text" id="proxy-server" class="setting-input" placeholder="代理地址，如 http://127.0.0.1:7890" autocomplete="off">
+            </div>
+            <div class="setting-row">
+              <input type="text" id="proxy-username" class="setting-input" placeholder="用户名（可选）" autocomplete="off">
+            </div>
+            <div class="setting-row">
+              <input type="password" id="proxy-password" class="setting-input" placeholder="密码（可选）" autocomplete="off">
+            </div>
+            <div class="setting-hint">修改仅对新打开的浏览器生效。</div>
+            <div class="settings-actions">
+              <button class="btn btn-primary" id="save-settings-btn">保存设置</button>
+            </div>
+            <div class="settings-message" id="settings-message"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右侧：标签页和截图 -->
+      <div class="panel-content">
+        <!-- 标签页列表 -->
+        <div class="content-section">
+          <div class="section-header">
+            <span class="header-title">标签页</span>
+            <span class="header-subtitle" id="tab-count"></span>
+          </div>
+          <div class="tab-list" id="tab-list">
+            <div class="empty-text">请选择一个浏览器实例</div>
+          </div>
+        </div>
+
+        <!-- 截图预览 -->
+        <div class="content-section screenshot-section">
+          <div class="section-header">
+            <span class="header-title">截图预览</span>
+          </div>
+          <div class="screenshot-container" id="screenshot-container">
+            <div class="empty-text">请选择一个标签页</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="panel.js"></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "skills": {
+    "code-review": {
+      "source": "getsentry/skills",
+      "sourceType": "github",
+      "skillPath": "skills/code-review/SKILL.md",
+      "computedHash": "f0604d278cfd4eac4dac29eb297a5c6b6ebfb9f020235e8aafbe2eff0e42a147"
+    },
+    "code-simplifier": {
+      "source": "getsentry/skills",
+      "sourceType": "github",
+      "skillPath": "skills/code-simplifier/SKILL.md",
+      "computedHash": "ff9cb10181e31daf1f1644754c491601a7849dff4b4536a1d0ec4f97f680348e"
+    },
+    "find-bugs": {
+      "source": "getsentry/skills",
+      "sourceType": "github",
+      "skillPath": "skills/find-bugs/SKILL.md",
+      "computedHash": "7bf00be700d1d205b747126aa96d3587bbc2855cd09897614676e179eebe35ed"
+    },
+    "gha-security-review": {
+      "source": "getsentry/skills",
+      "sourceType": "github",
+      "skillPath": "skills/gha-security-review/SKILL.md",
+      "computedHash": "b506580c0c826ed2a5e3e97835eaaa0b3133ba269029ec5213257f5d7cf57f29"
+    },
+    "security-review": {
+      "source": "getsentry/skills",
+      "sourceType": "github",
+      "skillPath": "skills/security-review/SKILL.md",
+      "computedHash": "ec9792f5fd065e020c48ab5a57707c83435c286c449ba98dfa726d7b1842c868"
+    }
+  }
+}

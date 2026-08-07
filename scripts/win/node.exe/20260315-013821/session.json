@@ -1,0 +1,14 @@
+﻿{
+    "sessionId":  "20260315-013821",
+    "procDumpPath":  "C:\\Users\\ASUS\\Desktop\\ai-build-ai\\agents\\tools\\procdump\\procdump64.exe",
+    "outputDir":  "C:\\Users\\ASUS\\Desktop\\ai-build-ai\\agents\\scripts\\win\\node.exe\\20260315-013821",
+    "startedAt":  "2026-03-15T01:38:21.8467854+08:00",
+    "watchers":  [
+                     {
+                         "target":  "bun.exe",
+                         "watcherPid":  39480,
+                         "outputDir":  "C:\\Users\\ASUS\\Desktop\\ai-build-ai\\agents\\scripts\\win\\node.exe\\20260315-013821\\bun.exe",
+                         "arguments":  "-accepteula -ma -e -t -n 5 -w bun.exe C:\\Users\\ASUS\\Desktop\\ai-build-ai\\agents\\scripts\\win\\node.exe\\20260315-013821\\bun.exe\\bun.exe-crash.dmp"
+                     }
+                 ]
+}

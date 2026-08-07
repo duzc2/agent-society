@@ -1,0 +1,73 @@
+import { registry } from "../../src/platform/core/module_registry.js";
+import { getMimeTypeFromExtension } from "../../src/platform/utils/content/content_type_utils.js";
+import { getWorkspaceManager } from "../../src/platform/services/workspace/workspace_manager.js";
+
+/**
+ * 注册 save-eval-script 相关的 Hono 路由。
+ * 由 registry 在依赖就绪时自动调用，与模块加载顺序无关。
+ * @param {{ app: import('hono').Hono, log: any }} deps
+ */
+function registerSaveEvalScriptRoutes({ app, log }) {
+  const workspaceManager = getWorkspaceManager();
+
+  app.post('/api/save-eval-script', async (c) => {
+    let body;
+    try {
+      body = await c.req.json();
+    } catch (err) {
+      return c.json({ error: "invalid_json", message: err.message }, 400);
+    }
+
+    const { workspaceId, script, filename } = body;
+
+    if (!workspaceId || typeof workspaceId !== "string") {
+      return c.json({ error: "missing_workspace_id" }, 400);
+    }
+    if (!script || typeof script !== "string") {
+      return c.json({ error: "missing_script" }, 400);
+    }
+    if (!filename || typeof filename !== "string") {
+      return c.json({ error: "missing_filename" }, 400);
+    }
+
+    try {
+      const safeName = filename.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").substring(0, 100);
+      if (!safeName) {
+        return c.json({ error: "invalid_filename" }, 400);
+      }
+
+      const filePath = `ui_page_js/${safeName}.js`;
+
+      const ws = await workspaceManager.getWorkspace(workspaceId);
+
+      // 创建父目录（忽略已存在错误）
+      try {
+        await workspaceManager.createDirectory(workspaceId, "ui_page_js", {
+          operator: "system",
+          messageId: `save_eval_${Date.now()}`
+        });
+      } catch {
+        // 目录可能已存在，忽略错误
+      }
+
+      await ws.writeFile(filePath, script, {
+        mimeType: getMimeTypeFromExtension(".js") ?? "text/javascript",
+        operator: "system",
+        messageId: `save_eval_${Date.now()}`
+      });
+
+      return c.json({ ok: true, path: filePath });
+    } catch (err) {
+      void log.error("保存 eval 脚本失败", { error: err.message, stack: err.stack });
+      return c.json({ error: "save_failed", message: err.message }, 500);
+    }
+  });
+}
+
+// 声明式注册：依赖就绪时自动初始化，与加载顺序无关。
+registry.declare({
+  name: 'save-eval-routes',
+  requires: ['app', 'log'],
+  provides: [],
+  async init(deps) { registerSaveEvalScriptRoutes(deps); return {}; }
+});

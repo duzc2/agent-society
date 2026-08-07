@@ -1,0 +1,628 @@
+@import "tailwindcss";
+
+:root {
+  /* Light Mode Semantic Tokens (N0-N12 Mapping) */
+  --bg: #F7F8FB;        /* N1: 页面底 */
+  --surface-1: #FFFFFF; /* N0: 纯白表面 */
+  --surface-2: #EEF2F7; /* N2: 次级底/分组底 */
+  --surface-3: #F0F4F8; /* N3: hover/选中弱底 */
+  
+  --text-1: #0F172A;    /* N10: 主文本 */
+  --text-2: #475569;    /* N8: 次文本 */
+  --text-3: #8899AA;    /* N9: 弱信息 */
+  
+  --border: rgba(15, 23, 42, 0.08);
+  --primary: #16B981;
+  --primary-hover: #10B981;
+  --primary-weak: rgba(22, 185, 129, 0.12);
+  --overlay: rgba(15, 23, 42, 0.30);
+}
+
+.my-app-dark {
+  /* Dark Mode Semantic Tokens (N0-N12 Mapping) */
+  --bg: #0B0F17;        /* N0: 极暗背景 */
+  --surface-1: #151B26; /* N2: 主表面 */
+  --surface-2: #0F172A; /* N1: 次表面 */
+  --surface-3: #1E293B; /* N3: 交互表面 */
+  
+  --text-1: #EEF2F7;    /* N10: 主文本 */
+  --text-2: #9CA3AF;    /* N9: 次文本 */
+  --text-3: #6B7280;    /* N8: 弱信息 */
+  
+  --border: #2A3A55;    /* N6: 分割线/描边 */
+  --primary: #2DD36F;
+  --primary-hover: #34D399;
+  --primary-weak: rgba(45, 211, 111, 0.15);
+  --overlay: rgba(0, 0, 0, 0.40);
+
+  /* ==================== 暗色模式滚动条样式 ==================== */
+  /* Webkit 滚动条滑块 - 暗色模式 */
+  ::-webkit-scrollbar-thumb {
+    background: rgba(107, 114, 128, 0.5); /* text-3 带透明度 */
+    border-radius: 4px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  /* Webkit 滚动条滑块悬停 - 暗色模式 */
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(156, 163, 175, 0.7); /* text-2 带透明度 */
+  }
+
+  /* Webkit 滚动条滑块激活 - 暗色模式 */
+  ::-webkit-scrollbar-thumb:active {
+    background: rgba(45, 211, 111, 0.9); /* primary */
+  }
+
+  /* Firefox 滚动条 - 暗色模式 */
+  scrollbar-color: rgba(107, 114, 128, 0.5) transparent;
+}
+
+@layer base {
+  /* ==================== 全局滚动条样式 ====================
+   * 设计原则：
+   * - 使用CSS变量确保与主题协调
+   * - 滚动条宽度适中，既易于操作又不占用过多空间
+   * - 圆角设计符合现代UI风格
+   * - 悬停时有视觉反馈
+   */
+
+  /* Webkit浏览器滚动条 (Chrome, Safari, Edge) */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  /* 滚动条轨道 */
+  ::-webkit-scrollbar-track {
+    background: transparent;
+    border-radius: 4px;
+  }
+
+  /* 滚动条滑块 - 亮色模式 */
+  ::-webkit-scrollbar-thumb {
+    background: rgba(136, 153, 170, 0.4); /* text-3 带透明度 */
+    border-radius: 4px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    transition: background 0.2s ease;
+  }
+
+  /* 滚动条滑块悬停 - 亮色模式 */
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(71, 85, 105, 0.6); /* text-2 带透明度 */
+  }
+
+  /* 滚动条滑块激活 - 亮色模式 */
+  ::-webkit-scrollbar-thumb:active {
+    background: rgba(22, 185, 129, 0.8); /* primary */
+  }
+
+  /* 滚动条角落 */
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /* Firefox 滚动条 - 亮色模式 */
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(136, 153, 170, 0.4) transparent;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text-1);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+    caret-color: var(--text-1); /* 确保光标颜色在深色模式下可见，与文字颜色一致 */
+  }
+
+  /* 显式设置输入框和文本域的文字和光标颜色，防止浏览器默认样式干扰 */
+  input, textarea {
+    color: var(--text-1);
+    caret-color: var(--text-1);
+  }
+
+  /* 确保 PrimeVue 的 InputText 也继承正确的文字颜色和背景色 */
+  .p-inputtext, .p-inputtextarea, .p-textarea {
+    color: var(--text-1) !important;
+    background: var(--surface-2) !important;
+    border-color: var(--border) !important;
+  }
+
+  /* PrimeVue InputText focus 状态 */
+  .p-inputtext:focus, .p-inputtextarea:focus, .p-textarea:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 2px var(--primary-weak) !important;
+  }
+
+  /* PrimeVue InputNumber 样式 */
+  .p-inputnumber-input {
+    color: var(--text-1) !important;
+    background: var(--surface-2) !important;
+    border-color: var(--border) !important;
+  }
+
+  .p-inputnumber-input:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 2px var(--primary-weak) !important;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  @keyframes pulse-quick {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(1.02); background-color: var(--primary-weak); }
+  }
+  .animate-pulse-quick {
+    animation: pulse-quick 0.5s ease-in-out 3;
+  }
+}
+
+/* PrimeVue Menu Theme Overrides */
+.p-menu {
+  background: var(--surface-1) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 15px -3px var(--overlay), 0 4px 6px -4px var(--overlay) !important;
+  padding: 0.5rem !important;
+  min-width: 160px !important;
+}
+
+.p-menu-list {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+.p-menu-item {
+  background: transparent !important;
+  border-radius: 6px !important;
+  transition: all 0.2s ease !important;
+}
+
+.p-menu-item:hover {
+  background: var(--surface-3) !important;
+}
+
+.p-menu-item-content {
+  background: transparent !important;
+  color: var(--text-1) !important;
+  padding: 0.5rem 0.75rem !important;
+}
+
+.p-menu-item-icon {
+  color: var(--text-2) !important;
+  margin-right: 0.75rem !important;
+}
+
+.p-menu-separator {
+  border-color: var(--border) !important;
+  margin: 0.5rem 0 !important;
+}
+
+/* PrimeVue Dialog / DynamicDialog Theme Overrides */
+.p-dialog {
+  background: var(--surface-1) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  color: var(--text-1) !important;
+  box-shadow: 0 20px 25px -5px var(--overlay), 0 8px 10px -6px var(--overlay) !important;
+  overflow: hidden !important;
+}
+
+.p-dialog-header {
+  background: var(--surface-1) !important;
+  color: var(--text-1) !important;
+  border-bottom: 1px solid var(--border) !important;
+  padding: 1.25rem 1.5rem !important;
+}
+
+.p-dialog-content {
+  background: var(--surface-1) !important;
+  color: var(--text-2) !important;
+  padding: 1.5rem !important;
+}
+
+/* 文件列表弹窗内容区域样式 */
+.agent-files-dialog .p-dialog-content {
+  padding: 1.25rem !important;
+}
+
+.p-dialog-footer {
+  background: var(--surface-1) !important;
+  border-top: 1px solid var(--border) !important;
+  padding: 1rem 1.5rem !important;
+}
+
+.p-dialog .p-dialog-header-icons .p-dialog-header-icon {
+  color: var(--text-3) !important;
+  transition: all 0.2s !important;
+}
+
+.p-dialog .p-dialog-header-icons .p-dialog-header-icon:hover {
+  background: var(--surface-3) !important;
+  color: var(--text-1) !important;
+}
+
+.p-dialog-mask {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  pointer-events: none !important;
+}
+
+.p-dialog-mask .p-dialog {
+  pointer-events: auto !important;
+}
+
+/* 最大化时占满整个视口，消除所有空隙 */
+.p-dialog.p-dialog-maximized {
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  top: 0 !important;
+  left: 0 !important;
+  transform: none !important;
+}
+
+/* PrimeVue Tabs Overrides */
+.p-tabs {
+  background: transparent !important;
+  border-color: var(--border) !important;
+}
+
+.p-tablist {
+  background: transparent !important;
+  border-color: var(--border) !important;
+  position: relative;
+  --tablist-bg: var(--surface-1);
+}
+
+.p-tablist-content {
+  background: transparent !important;
+  border-color: var(--border) !important;
+}
+
+/* 修复横向滚动时的箭头按钮和遮罩背景 */
+.p-tablist-nav-button {
+  background: var(--tablist-bg) !important;
+  color: var(--text-2) !important;
+  border: none !important;
+  width: 32px !important;
+  height: 100% !important;
+  position: absolute !important;
+  top: 0 !important;
+  z-index: 2 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: all 0.2s !important;
+  box-shadow: none !important;
+}
+
+.p-tablist-prev-button {
+  left: 0 !important;
+  background: linear-gradient(to right, var(--tablist-bg) 70%, transparent 100%) !important;
+}
+
+.p-tablist-next-button {
+  right: 0 !important;
+  background: linear-gradient(to left, var(--tablist-bg) 70%, transparent 100%) !important;
+}
+
+.p-tablist-nav-button:hover {
+  color: var(--text-1) !important;
+}
+
+.p-tab {
+  background: transparent !important;
+  color: var(--text-3) !important;
+  border-color: transparent !important;
+  transition: all 0.2s !important;
+}
+
+.p-tab:hover {
+  color: var(--text-1) !important;
+  background: var(--surface-3) !important;
+}
+
+.p-tab-active {
+  color: var(--primary) !important;
+  border-bottom-color: var(--primary) !important;
+}
+
+.p-tabpanels {
+  background: transparent !important;
+  color: var(--text-2) !important;
+}
+
+.p-tabpanel {
+  background: transparent !important;
+}
+
+/* PrimeVue Splitter Overrides */
+.p-splitter {
+  background: transparent !important;
+  border-color: var(--border) !important;
+}
+
+.p-splitter-gutter {
+  background: var(--surface-2) !important;
+}
+
+.p-splitter-gutter-handle {
+  background: var(--border) !important;
+}
+
+/* ==================== 组织列表项新增动画样式 ====================
+ * 功能：当新组织被创建时，列表项会播放入场动画
+ * 包含：弹出效果、旋转摆动、颜色闪烁、粒子迸发
+ * 设计规范参考：docs/ui-modern-theme-spec-v2.md
+ * 支持亮色/暗色主题
+ */
+
+/* 动画配色 - 使用固定高反差颜色，不随主题变化 */
+:root {
+  /* 主色 */
+  --org-anim-primary: #10B981;
+  /* 高亮 - 亮黄色（强烈反差） */
+  --org-anim-highlight: #FDE047;
+  --org-anim-highlight-glow: rgba(253, 224, 71, 0.9);
+  /* 粒子颜色 - 固定高亮 */
+  --org-particle-gold: #FFEA00;
+  --org-particle-cyan: #22D3EE;
+  --org-particle-white: #FFFFFF;
+  --org-particle-green: #4ADE80;
+  --org-particle-orange: #FB923C;
+}
+
+.my-app-dark {
+  --org-anim-primary: #2DD36F;
+  --org-anim-highlight: #FEF08A;
+  --org-anim-highlight-glow: rgba(254, 240, 138, 0.95);
+  --org-particle-gold: #FFEA00;
+  --org-particle-cyan: #67E8F9;
+  --org-particle-white: #FFFFFF;
+  --org-particle-green: #86EFAC;
+  --org-particle-orange: #FDBA74;
+}
+
+/* 组织项入场动画 - 总时长3s，超夸张效果 */
+@keyframes org-item-enter {
+  /* 阶段1：超大弹出（0-25% = 0-750ms） */
+  0% {
+    opacity: 0 !important;
+    transform: scale(0.0) rotate(-20deg) !important;
+    filter: brightness(3) saturate(2) !important;
+  }
+  10% {
+    opacity: 0.8 !important;
+    transform: scale(2.0) rotate(15deg) !important;
+    filter: brightness(2.5) saturate(1.8) !important;
+    box-shadow: 0 0 50px 10px var(--org-anim-highlight-glow) !important;
+  }
+  20% {
+    opacity: 1 !important;
+    transform: scale(1.8) rotate(-10deg) !important;
+    filter: brightness(2) saturate(1.5) !important;
+    box-shadow: 0 0 40px 8px var(--org-anim-highlight-glow) !important;
+  }
+  25% {
+    transform: scale(1.5) rotate(5deg) !important;
+    filter: brightness(1.5) !important;
+    box-shadow: 0 0 30px 6px var(--org-anim-primary) !important;
+  }
+
+  /* 阶段2：疯狂摇摆（25-60% = 750-1800ms） - 使用固定金黄色 */
+  30% {
+    transform: rotate(20deg) scale(1.3) !important;
+    background-color: #FDE047 !important;
+    box-shadow: 0 0 40px 10px rgba(253, 224, 71, 0.9) !important;
+  }
+  40% {
+    transform: rotate(-20deg) scale(1.3) !important;
+    background-color: var(--primary-weak) !important;
+    box-shadow: 0 0 30px 8px var(--primary) !important;
+  }
+  50% {
+    transform: rotate(15deg) scale(1.2) !important;
+    background-color: #FDE047 !important;
+    box-shadow: 0 0 50px 12px rgba(253, 224, 71, 0.9) !important;
+  }
+  60% {
+    transform: rotate(-10deg) scale(1.15) !important;
+    background-color: var(--primary-weak) !important;
+    box-shadow: 0 0 25px 5px var(--primary) !important;
+  }
+
+  /* 阶段3：高亮闪烁（60-100% = 1800-3000ms） - 金黄色闪烁 */
+  65% {
+    transform: rotate(0deg) scale(1.1) !important;
+    background-color: #FDE047 !important;
+    box-shadow: 0 0 60px 15px rgba(253, 224, 71, 0.95) !important;
+  }
+  70% {
+    background-color: var(--surface-3) !important;
+    box-shadow: 0 0 30px 8px var(--primary) !important;
+  }
+  75% {
+    background-color: #FDE047 !important;
+    box-shadow: 0 0 50px 12px rgba(253, 224, 71, 0.95) !important;
+  }
+  80% {
+    background-color: var(--surface-3) !important;
+    box-shadow: 0 0 20px 5px var(--primary) !important;
+  }
+  85% {
+    background-color: var(--primary-weak) !important;
+    box-shadow: 0 0 40px 10px var(--primary) !important;
+  }
+  100% {
+    opacity: 1 !important;
+    transform: scale(1) rotate(0deg) !important;
+    background-color: var(--surface-3) !important;
+    box-shadow: 0 0 0 0 transparent !important;
+    filter: brightness(1) saturate(1) !important;
+  }
+}
+
+/* 图标超炫动画 */
+@keyframes org-icon-bounce {
+  0%, 100% {
+    transform: scale(1) rotate(0deg);
+  }
+  10% {
+    transform: scale(2.5) rotate(-30deg);
+  }
+  25% {
+    transform: scale(2) rotate(20deg);
+  }
+  40% {
+    transform: scale(2.2) rotate(-15deg);
+  }
+  55% {
+    transform: scale(1.8) rotate(10deg);
+  }
+  70% {
+    transform: scale(2) rotate(-5deg);
+  }
+  85% {
+    transform: scale(1.5) rotate(5deg);
+  }
+}
+
+/* 粒子爆炸飞散动画 - 从中心向外 */
+@keyframes particle-burst {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) scale(0.5);
+  }
+  10% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1.5);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--fly-x), var(--fly-y)) scale(0.3);
+  }
+}
+
+/* 新组织项动画类 */
+.org-item-new {
+  will-change: transform, opacity, background-color, filter, box-shadow !important;
+  animation: org-item-enter 3s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards !important;
+  position: relative !important;
+  z-index: 1000 !important;
+  border-radius: 0.5rem !important;
+  overflow: visible !important;
+}
+
+/* 覆盖 PrimeVue Button 样式 */
+.org-item-new.p-button {
+  background-color: var(--surface-3) !important;
+  transition: none !important;
+}
+
+.org-item-new .org-icon {
+  animation: org-icon-bounce 3s ease-in-out forwards !important;
+  z-index: 2000 !important;
+  position: relative !important;
+}
+
+/* 粒子容器 - 固定在图标中心位置 - 使用固定像素定位 */
+.org-item-particles {
+  position: absolute;
+  top: 16px;
+  left: 22px;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+  z-index: 2147483647 !important;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+/* 单个粒子 - 巨大超亮 */
+.org-particle {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  top: 50%;
+  left: 50%;
+  margin-top: -10px;
+  margin-left: -10px;
+  opacity: 1;
+  will-change: transform, opacity;
+  z-index: 2147483647 !important;
+}
+
+.org-particle.active {
+  animation: particle-burst 1.5s ease-out forwards;
+}
+
+/* 粒子颜色 - 超亮发光 - 使用固定颜色确保可见 */
+.org-particle.color-1 {
+  background: radial-gradient(circle, #FFFFFF 0%, #FFEA00 30%, transparent 70%);
+  background-color: #FFEA00;
+  box-shadow: 0 0 20px 8px #FFEA00, 0 0 40px 16px rgba(255, 234, 0, 0.8);
+}
+
+.org-particle.color-2 {
+  background: radial-gradient(circle, #FFFFFF 0%, #00E5FF 30%, transparent 70%);
+  background-color: #00E5FF;
+  box-shadow: 0 0 20px 8px #00E5FF, 0 0 40px 16px rgba(0, 229, 255, 0.8);
+}
+
+.org-particle.color-3 {
+  background: radial-gradient(circle, #FFFFFF 0%, #39FF14 30%, transparent 70%);
+  background-color: #39FF14;
+  box-shadow: 0 0 20px 8px #39FF14, 0 0 40px 16px rgba(57, 255, 20, 0.8);
+}
+
+.org-particle.color-4 {
+  background: radial-gradient(circle, #FFFFFF 0%, #FF9500 30%, transparent 70%);
+  background-color: #FF9500;
+  box-shadow: 0 0 25px 10px #FF9500, 0 0 50px 20px rgba(255, 149, 0, 0.9);
+}
+
+/* 粒子大小变体 */
+.org-particle.small {
+  width: 12px;
+  height: 12px;
+}
+
+.org-particle.large {
+  width: 28px;
+  height: 28px;
+}
+
+/* 性能优化 */
+@media (prefers-reduced-motion: reduce) {
+  .org-item-new {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    box-shadow: none;
+    filter: none;
+  }
+  
+  .org-item-new .org-icon {
+    animation: none;
+  }
+  
+  .org-particle {
+    display: none;
+  }
+}

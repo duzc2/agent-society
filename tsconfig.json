@@ -1,0 +1,59 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023", "DOM"],
+    
+    // 类型检查严格程度（渐进式迁移，先宽松）
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "strictFunctionTypes": false,
+    "noEmitOnError": false,
+    
+    // 仅类型检查，不输出
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": true,
+    
+    // TS 6.0 兼容
+    "ignoreDeprecations": "6.0",
+
+    // 路径解析
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@platform/*": ["src/platform/*"]
+    },
+    
+    // 模块解析
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    
+    // 声明文件
+    "declaration": false,
+    "skipLibCheck": true,
+    
+    // 输出目录（不使用，但保留配置）
+    "outDir": "./dist",
+    "rootDir": ".",
+    
+    // 源码映射
+    "sourceMap": false
+  },
+  "include": [
+    "src/**/*",
+    "test/**/*",
+    "types/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "coverage",
+    "data",
+    ".tmp",
+    "web",
+    "dist"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "chrome": {},
+  "ssh": { "lazy": true },
+  "ui_page": {},
+  "localfile": {},
+  "automation": { "lazy": true },
+  "localcmd": {},
+  "document": {},
+  "light-ocr": {},
+  "message_tools": {},
+  "bigfile": {}
+}
