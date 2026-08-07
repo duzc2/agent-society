@@ -278,7 +278,8 @@ export class GitSkillService {
         commitId: (commitId || "").trim(),
         commitDate: (commitDate || "").trim()
       };
-    } catch {
+    } catch (err) {
+      this.log.error("获取 commit 信息失败", { repoDir, error: err?.message ?? String(err), stack: err?.stack });
       return { commitId: "unknown", commitDate: "" };
     }
   }
@@ -395,7 +396,8 @@ export class GitSkillService {
         return "";
       }
       return this._parseDescriptionFromContent(content);
-    } catch {
+    } catch (err) {
+      this.log.error("读取 SKILL.md description 失败", { gitSkillId, error: err?.message ?? String(err), stack: err?.stack });
       return "";
     }
   }

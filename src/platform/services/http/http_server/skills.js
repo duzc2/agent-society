@@ -401,6 +401,7 @@ function registerSkillRoutes({ app, skillsService, customSkillService, gitSkillS
       const record = await gitSkillService.updateGitSkill(skillId);
       return c.json({ skill: record });
     } catch (updateError) {
+      void log.error("更新Git技能失败", { skillId, error: updateError?.message ?? String(updateError), stack: updateError?.stack });
       return c.json({ error: "git_update_failed", message: updateError?.message || "更新失败" }, 500);
     }
   });
