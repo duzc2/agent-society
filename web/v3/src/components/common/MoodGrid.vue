@@ -17,7 +17,9 @@ const showColors = computed(() =>
 
 const gradientStyle = computed(() => {
   if (!showColors.value || !props.moodColors) return {};
-  return { background: `conic-gradient(${props.moodColors.join(', ')})` };
+  // 末尾重复第一个颜色作为第 6 个色标，确保 c5→c1 有渐变过渡而非硬切
+  const allStops = [...props.moodColors, props.moodColors[0]];
+  return { background: `conic-gradient(${allStops.join(', ')})` };
 });
 </script>
 
