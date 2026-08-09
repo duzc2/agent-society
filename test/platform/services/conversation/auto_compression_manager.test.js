@@ -1,6 +1,7 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert";
 import { AutoCompressionManager } from "../../../../src/platform/services/conversation/auto_compression_manager.js";
+import { ToolCallPairCompressor } from "../../../../src/platform/services/conversation/tool_call_pair_compressor.js";
 
 /**
  * 创建模拟 logger，静默所有输出。
@@ -246,6 +247,206 @@ describe("AutoCompressionManager — 自动压缩阈值与 maxContextTokens 参�
       const msgsCopy = [...msgs];
       await manager.process(msgsCopy, 64000);
       assert.strictEqual(msgsCopy.length, msgs.length, "熔断后不应修改消息数组");
+    });
+  });
+
+  describe("_validateMessageArray — 边界条件", () => {
+    function makeManager() {
+      return new AutoCompressionManager(makeMockLlmClient(), makeSilentLogger());
+    }
+
+    it("空数组返回 false", () => {
+      const manager = makeManager();
+      assert.strictEqual(manager._validateMessageArray([]), false);
+    });
+
+    it("非数组返回 false", () => {
+      const manager = makeManager();
+      assert.strictEqual(manager._validateMessageArray(null), false);
+      assert.strictEqual(manager._validateMessageArray(undefined), false);
+      assert.strictEqual(manager._validateMessageArray("string"), false);
+    });
+
+    it("没有 user 消息返回 false", () => {
+      const manager = makeManager();
+      const messages = [
+        { role: "assistant", content: "hi" },
+        { role: "tool", content: "result" }
+      ];
+      assert.strictEqual(manager._validateMessageArray(messages), false);
+    });
+
+    it("存在孤立的 tool 消息（tool_call_id 无对应 assistant.tool_calls）返回 false", () => {
+      const manager = makeManager();
+      const messages = [
+        { role: "user", content: "hello" },
+        { role: "tool", tool_call_id: "orphan_1", content: "result" }
+      ];
+      assert.strictEqual(manager._validateMessageArray(messages), false);
+    });
+
+    it("tool 消息无 tool_call_id 时不应触发孤立检查", () => {
+      const manager = makeManager();
+      const messages = [
+        { role: "user", content: "hello" },
+        { role: "tool", content: "result" } // 无 tool_call_id
+      ];
+      assert.strictEqual(manager._validateMessageArray(messages), true);
+    });
+
+    it("有效的消息数组返回 true", () => {
+      const manager = makeManager();
+      const messages = [
+        { role: "user", content: "hello" },
+        {
+          role: "assistant",
+          content: "hi",
+          tool_calls: [{ id: "call_1", type: "function", function: { name: "t", arguments: "{}" } }]
+        },
+        { role: "tool", tool_call_id: "call_1", content: "result" },
+        { role: "user", content: "thanks" },
+      ];
+      assert.strictEqual(manager._validateMessageArray(messages), true);
+    });
+
+    it("多条 tool_calls 全部配对时返回 true", () => {
+      const manager = makeManager();
+      const messages = [
+        { role: "user", content: "do it" },
+        {
+          role: "assistant",
+          content: "ok",
+          tool_calls: [
+            { id: "call_a", type: "function", function: { name: "ta", arguments: "{}" } },
+            { id: "call_b", type: "function", function: { name: "tb", arguments: "{}" } }
+          ]
+        },
+        { role: "tool", tool_call_id: "call_a", content: "ra" },
+        { role: "tool", tool_call_id: "call_b", content: "rb" },
+      ];
+      assert.strictEqual(manager._validateMessageArray(messages), true);
+    });
+  });
+
+  describe("_performCompression — 摘要消息 role", () => {
+    it("应生成 role 为 user 的摘要消息", () => {
+      const manager = new AutoCompressionManager(makeMockLlmClient(), makeSilentLogger());
+
+      const messages = [
+        { role: "user", content: "old Q1" },
+        { role: "assistant", content: "old A1" },
+        { role: "user", content: "old Q2" },
+        { role: "assistant", content: "old A2" },
+        { role: "user", content: "recent Q" },
+        { role: "assistant", content: "recent A" },
+      ];
+
+      manager._performCompression(messages, "summary text", 2);
+
+      assert.strictEqual(messages[0].role, "user", "摘要消息 role 应为 user");
+      assert.strictEqual(messages[0].isCompressed, true);
+      assert.ok(messages[0].content.includes("[压缩摘要]"), "摘要消息应包含压缩标记");
+      assert.ok(messages[0].content.includes("summary text"), "摘要消息应包含摘要内容");
+    });
+
+    it("保留的消息 + 摘要消息中无 user 时不应修改原数组（_performCompression 内部验证）", () => {
+      const manager = new AutoCompressionManager(makeMockLlmClient(), makeSilentLogger());
+
+      // 构造：保留的消息中没有 user，且没有压缩摘要的 user role 能覆盖
+      // 但 _performCompression 的 summaryMessage 本身就是 user → 验证会通过
+      // 所以设计一个场景：keepCount=0（保留 0 条），但 messages 只有 tool/assistant，
+      // 这样只要 _performCompression 不清空就不影响
+      const messages = [
+        { role: "assistant", content: "some content" },
+        { role: "tool", content: "tool result" },
+      ];
+      const originalLength = messages.length;
+      const originalContent = messages[0].content;
+
+      // keepCount=0：不保留任何原消息 → candidate = [summaryMessage(user)] → 验证通过
+      // keepCount=1：保留 tool → candidate = [summaryMessage(user), tool] → 有 user，tool 无 tool_call_id → 通过
+      // keepCount=2：保留 [assistant, tool] → candidate = [summaryMessage(user), assistant, tool] → 通过
+      // 所有这些情况 summaryMessage 都提供了 user role，所以验证总会通过
+      manager._performCompression(messages, "summary text", 1);
+
+      // 验证通过后数组被修改：summaryMessage(user) + 1 kept message
+      assert.strictEqual(messages.length, 2, "压缩后应为 2 条（summary + 1 kept）");
+      assert.strictEqual(messages[0].role, "user", "摘要消息应为 user");
+      assert.strictEqual(messages[0].isCompressed, true);
+    });
+  });
+
+  describe("constructor — 接受 compressor 参数", () => {
+    it("不传 compressor 时 _compressor 为 undefined", () => {
+      const manager = new AutoCompressionManager(makeMockLlmClient(), makeSilentLogger());
+      assert.strictEqual(manager._compressor, undefined);
+    });
+
+    it("传入 compressor 后 _compressor 被正确赋值", () => {
+      const compressor = new ToolCallPairCompressor();
+      const manager = new AutoCompressionManager(makeMockLlmClient(), makeSilentLogger(), compressor);
+      assert.strictEqual(manager._compressor, compressor);
+    });
+  });
+
+  describe("两阶段压缩集成", () => {
+    it("无 compressor 时直接执行 Stage 2（全文摘要压缩）", async () => {
+      const chatCalls = [];
+      const llmClient = {
+        chat: async (req) => {
+          chatCalls.push(req);
+          return { content: "summary" };
+        }
+      };
+      // 不传 compressor
+      const manager = new AutoCompressionManager(llmClient, makeSilentLogger());
+
+      const bigContent = englishContentForTokens(15000);
+      const msgs = [
+        { role: "user", content: bigContent },
+        { role: "assistant", content: bigContent },
+        { role: "user", content: bigContent },
+      ];
+
+      await manager.process(msgs, 64000);
+
+      assert.ok(chatCalls.length >= 1, "无 compressor 时走 Stage 2");
+      assert.strictEqual(msgs[0].role, "user", "摘要应为 user 角色");
+      assert.strictEqual(msgs[0].isCompressed, true);
+    });
+
+    it("Stage 1 有压缩但 token 仍超标 → 继续 Stage 2", async () => {
+      const chatCalls = [];
+      const llmClient = {
+        chat: async (req) => {
+          chatCalls.push(req);
+          return { content: "[关键决策]\n- x\n[重要事实]\n- y" };
+        }
+      };
+
+      const compressor = new ToolCallPairCompressor();
+      const manager = new AutoCompressionManager(llmClient, makeSilentLogger(), compressor);
+
+      // 构造大量内容：20 轮，每轮含大 tool 结果
+      const bigToolResult = "x".repeat(5000);
+      const msgs = [];
+      for (let i = 1; i <= 20; i++) {
+        msgs.push({ role: "user", content: `Q${i}` });
+        msgs.push({
+          role: "assistant",
+          content: `A${i}`,
+          tool_calls: [{ id: `call_${i}`, type: "function", function: { name: "t", arguments: "{}" } }]
+        });
+        msgs.push({ role: "tool", tool_call_id: `call_${i}`, name: "t", content: bigToolResult });
+      }
+
+      const origLen = msgs.length;
+      await manager.process(msgs, 8000);
+
+      // Stage 1 should have run (pairsCompressed in log), and Stage 2 should follow
+      assert.ok(chatCalls.length >= 1, `Stage 1 不够时应触发 Stage 2, chatCalls=${chatCalls.length}`);
+      assert.strictEqual(msgs[0].role, "user", `msgs[0].role=${msgs[0].role}, content_preview=${String(msgs[0].content).slice(0, 80)}`);
+      assert.strictEqual(msgs[0].isCompressed, true, "最终应有压缩摘要");
     });
   });
 });

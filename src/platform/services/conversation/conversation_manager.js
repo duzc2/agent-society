@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { AutoCompressionManager } from "./auto_compression_manager.js";
+import { ToolCallPairCompressor } from "./tool_call_pair_compressor.js";
 
 /**
  * 会话上下文管理器
@@ -45,7 +46,8 @@ export class ConversationManager {
 
     // 自动压缩管理器（使用默认 LLM，始终创建）
     if (this._llmClient) {
-      this._autoCompressionManager = new AutoCompressionManager(this._llmClient, this._logger);
+      const compressor = new ToolCallPairCompressor();
+      this._autoCompressionManager = new AutoCompressionManager(this._llmClient, this._logger, compressor);
     } else {
       this._autoCompressionManager = null;
     }

@@ -24,10 +24,12 @@ export class AutoCompressionManager {
   /**
    * @param {Object} llmClient - LLM 客户端引用，用于生成压缩摘要
    * @param {Object} logger - 日志记录器
+   * @param {Object} compressor - 工具调用对压缩器实例
    */
-  constructor(llmClient, logger) {
+  constructor(llmClient, logger, compressor) {
     this._llmClient = llmClient;
     this._logger = logger;
+    this._compressor = compressor;
     this._failureCount = 0;  // 熔断计数器
   }
 
@@ -89,6 +91,39 @@ export class AutoCompressionManager {
       // 记录压缩前的状态
       const beforeCount = messages.length;
 
+      // ═══ Stage 1: 工具调用对压缩（最高优先级） ═══
+      if (this._compressor) {
+        const stage1Result = this._compressor.compress(messages, { keepRounds: 10 });
+
+        if (stage1Result.stats.pairsCompressed > 0) {
+          // 验证压缩结果
+          if (!this._validateMessageArray(stage1Result.messages)) {
+            this._logger.warn('Stage 1 压缩结果不满足消息要求，放弃', {
+              compressedCount: stage1Result.stats.pairsCompressed,
+              reason: 'validation_failed'
+            });
+            return;
+          }
+
+          const stage1Usage = stage1Result.stats.estimatedTokensAfter / maxContextTokens;
+
+          if (stage1Usage < AutoCompressionManager.THRESHOLD) {
+            // Stage 1 够用，应用
+            messages.length = 0;
+            messages.push(...stage1Result.messages);
+            this._logger.info('Stage 1 完成，无需 Stage 2', stage1Result.stats);
+            this._failureCount = 0;
+            return;
+          }
+
+          // Stage 1 不够，先应用作为 Stage 2 的基础
+          messages.length = 0;
+          messages.push(...stage1Result.messages);
+          this._logger.info('Stage 1 完成，但 token 仍超阈值，继续 Stage 2', stage1Result.stats);
+        }
+      }
+
+      // ═══ Stage 2: 全文摘要压缩（兜底） ═══
       // 提取需要压缩的消息（同时按比例计算保留数量）
       const { toCompress, keepCount } = this._extractMessagesToCompress(messages);
 
@@ -111,8 +146,34 @@ export class AutoCompressionManager {
         return;
       }
 
-      // 执行压缩操作（直接修改 messages 数组）
-      this._performCompression(messages, summary, keepCount);
+      // 验证并调整 keepCount：避免在 tool_call 配对边界处切开
+      // _extractMessagesToCompress 的 token 累加可能在 tool 消息处停止，
+      // 导致 tool 留在 recentMessages 但其 assistant（含 tool_calls）在 toCompress 中，
+      // 形成孤立的 tool 消息，违反 _validateMessageArray 规则 2。
+      let adjustedKeepCount = keepCount;
+      while (adjustedKeepCount >= AutoCompressionManager.MIN_KEEP) {
+        const recent = messages.slice(-adjustedKeepCount);
+        const summaryMessage = {
+          role: 'user',
+          content: `[压缩摘要]\n${summary}`,
+          isCompressed: true,
+          compressedAt: new Date().toISOString()
+        };
+        const candidate = [summaryMessage, ...recent];
+        if (this._validateMessageArray(candidate)) break;
+        adjustedKeepCount--;
+      }
+
+      if (adjustedKeepCount < AutoCompressionManager.MIN_KEEP) {
+        this._logger.warn('Stage 2 压缩结果不满足消息要求，放弃', {
+          keepCount,
+          adjustedKeepCount
+        });
+        return;
+      }
+
+      // 验证通过，应用压缩
+      this._performCompression(messages, summary, adjustedKeepCount);
 
       // 记录压缩后的状态
       const afterCount = messages.length;
@@ -395,16 +456,21 @@ ${formattedMessages}
   _performCompression(messages, summary, keepCount) {
     const recentMessages = messages.slice(-keepCount);
 
-    // 创建摘要消息
+    // 创建摘要消息（role: user 而非 assistant，确保 llm_truncation_service 不会删光消息）
     const summaryMessage = {
-      role: 'assistant',
+      role: 'user',
       content: `[压缩摘要]\n${summary}`,
       isCompressed: true,
       compressedAt: new Date().toISOString()
     };
 
-    // 重新构建消息数组
     const newMessages = [summaryMessage, ...recentMessages];
+
+    // 最终验证（双保险）
+    if (!this._validateMessageArray(newMessages)) {
+      this._logger.warn('_performCompression: 压缩结果不满足消息要求，放弃写入');
+      return;
+    }
 
     // 清空原数组并填充新消息
     messages.length = 0;
@@ -415,5 +481,41 @@ ${formattedMessages}
       keepCount,
       summaryLength: summary.length
     });
+  }
+
+  /**
+   * 验证压缩后的消息数组是否满足 LLM 调用的基本要求。
+   * 验证不通过时，压缩操作应被放弃。
+   *
+   * @param {Array} messages
+   * @returns {boolean}
+   */
+  _validateMessageArray(messages) {
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return false;
+    }
+
+    // 规则 1：必须至少有一条约 user 消息
+    const hasAnyUser = messages.some(m => m?.role === 'user');
+    if (!hasAnyUser) {
+      return false;
+    }
+
+    // 规则 2：所有 tool 消息的 tool_call_id 必须在某条 assistant.tool_calls 中出现
+    const validToolCallIds = new Set();
+    for (const msg of messages) {
+      if (msg?.role === 'assistant' && Array.isArray(msg.tool_calls)) {
+        for (const tc of msg.tool_calls) {
+          if (tc.id) validToolCallIds.add(tc.id);
+        }
+      }
+    }
+    for (const msg of messages) {
+      if (msg?.role === 'tool' && msg.tool_call_id && !validToolCallIds.has(msg.tool_call_id)) {
+        return false;
+      }
+    }
+
+    return true;
   }
 }
