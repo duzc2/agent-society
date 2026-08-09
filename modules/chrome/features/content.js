@@ -36,7 +36,7 @@ export class ContentFeature {
         type: "function",
         function: {
           name: "chrome_get_text",
-          description: "获取页面纯文本内容，自动过滤 HTML 标签。可获取整个页面或特定元素的文本。",
+          description: "获取页面结构化文本内容。保留标题层级(h1-h6)、可交互元素(链接、按钮、输入框等)标记和列表结构，自动过滤隐藏元素和装饰性容器。",
           parameters: {
             type: "object",
             properties: {
@@ -231,17 +231,288 @@ export class ContentFeature {
     }
 
     try {
-      let text;
-
       if (cleanedSelector) {
         const element = await page.$(cleanedSelector);
         if (!element) {
           return { error: "element_not_found", selector: cleanedSelector, originalSelector: selectorModified ? originalSelector : undefined };
         }
-        text = await page.evaluate(el => /** @type {HTMLElement} */(el).innerText || el.textContent, element);
-      } else {
-        text = await page.evaluate(() => document.body.innerText || document.body.textContent || '');
       }
+
+      const text = await page.evaluate((sel) => {
+        const MAX_OUTPUT = 50000;
+        const lines = [];
+        let textAccum = '';
+
+        const SKIP_TAGS = new Set(['script', 'style', 'noscript', 'svg', 'path', 'head', 'meta', 'link', 'iframe', 'br', 'hr']);
+        const INTERACTIVE_TAGS = new Set(['a', 'button', 'input', 'select', 'textarea']);
+        const BLOCK_TAGS = new Set(['p', 'pre', 'blockquote', 'figcaption', 'td', 'th']);
+        const CONTAINER_TAGS = new Set(['div', 'section', 'article', 'main', 'aside', 'nav', 'header', 'footer', 'form', 'fieldset', 'details', 'dialog', 'figure', 'summary']);
+
+        function isVisible(el) {
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        }
+
+        function isSkippable(el) {
+          const tag = el.tagName && el.tagName.toLowerCase();
+          return !tag || SKIP_TAGS.has(tag);
+        }
+
+        function flushAccum() {
+          if (textAccum.trim()) {
+            lines.push(textAccum.trim());
+            textAccum = '';
+          }
+        }
+
+        function findLabel(el) {
+          if (el.id) {
+            try {
+              const labelEl = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+              if (labelEl && isVisible(labelEl)) return labelEl.textContent.trim();
+            } catch (_) { /* ignore invalid CSS.escape input */ }
+          }
+          const parentLabel = el.closest('label');
+          if (parentLabel) return parentLabel.textContent.trim();
+          return el.getAttribute('aria-label') || '';
+        }
+
+        function truncateUrl(href) {
+          if (href.length > 80) return href.slice(0, 77) + '...';
+          return href;
+        }
+
+        function describeLinkContent(el) {
+          // 只看第一层子元素，描述链接内的非文本内容（如 img、svg）
+          const children = el.children;
+          if (!children || children.length === 0) return null;
+
+          for (let i = 0; i < children.length; i++) {
+            const child = children[i];
+            if (!isVisible(child)) continue;
+
+            const childTag = child.tagName && child.tagName.toLowerCase();
+
+            // 图片 — 优先用 alt 文本
+            if (childTag === 'img') {
+              const alt = child.getAttribute('alt');
+              return '图片' + (alt && alt.trim() ? ': ' + alt.trim() : '');
+            }
+            // SVG 图标
+            if (childTag === 'svg') return '图标';
+            // 其他元素有文本的取其文本
+            const childText = child.textContent && child.textContent.trim();
+            if (childText) return childText;
+            // 兜底：用标签名描述
+            if (childTag) return childTag;
+          }
+
+          return null;
+        }
+
+        function getShortSelector(el) {
+          // 优先使用 id
+          if (el.id) return '#' + CSS.escape(el.id);
+          // 尝试使用唯一 name 属性
+          if (el.name) {
+            var byName = document.querySelectorAll('[name="' + CSS.escape(el.name) + '"]');
+            if (byName.length === 1) return '[name="' + el.name + '"]';
+          }
+          // 标签 + 类名
+          var sel = el.tagName.toLowerCase();
+          if (el.className && typeof el.className === 'string') {
+            var classes = el.className.trim().split(/\s+/).filter(function(c) { return c && c.indexOf(':') === -1; });
+            if (classes.length > 0) sel += '.' + classes.slice(0, 2).map(function(c) { return CSS.escape(c); }).join('.');
+          }
+          // nth-child 保唯一
+          var parent = el.parentElement;
+          if (parent) {
+            var siblings = Array.from(parent.children).filter(function(c) { return c.tagName === el.tagName; });
+            if (siblings.length > 1) {
+              var index = siblings.indexOf(el) + 1;
+              sel += ':nth-child(' + index + ')';
+            }
+          }
+          return sel;
+        }
+
+        function formatInteractive(el, tag) {
+          switch (tag) {
+            case 'a': {
+              const href = el.getAttribute('href') || '';
+              const t = el.textContent.trim();
+              const text = t || describeLinkContent(el);
+              if (!text) return null;
+              return '[链接: ' + text + '](' + truncateUrl(href) + ')';
+            }
+            case 'button': {
+              const t = el.textContent.trim();
+              if (!t) return null;
+              return '[按钮: ' + t + ']';
+            }
+            case 'input': {
+              const type = (el.getAttribute('type') || 'text').toLowerCase();
+              switch (type) {
+                case 'submit':
+                case 'button':
+                case 'reset':
+                  return '[按钮: ' + (el.value || '') + ']';
+                case 'text':
+                case 'search':
+                case 'url':
+                case 'tel':
+                  return '[输入框: ' + type + (el.placeholder ? ' | 占位符: ' + el.placeholder : '') + ']';
+                case 'password':
+                  return '[密码框' + (el.placeholder ? ' | 占位符: ' + el.placeholder : '') + ']';
+                case 'email':
+                  return '[邮箱输入' + (el.placeholder ? ' | 占位符: ' + el.placeholder : '') + ']';
+                case 'number':
+                  return '[数字输入' + (el.placeholder ? ' | 占位符: ' + el.placeholder : '') + ']';
+                case 'checkbox': {
+                  const label = findLabel(el);
+                  return (el.checked ? '[x] ' : '[ ] ') + label;
+                }
+                case 'radio': {
+                  const label = findLabel(el);
+                  return (el.checked ? '[*] ' : '[o] ') + label;
+                }
+                default:
+                  return null;
+              }
+            }
+            case 'select': {
+              const opt = el.options[el.selectedIndex];
+              return '[下拉框: ' + (opt ? opt.text : '') + ']';
+            }
+            case 'textarea':
+              return '[文本域' + (el.placeholder ? ' | 占位符: ' + el.placeholder : '') + ']';
+            default:
+              return null;
+          }
+        }
+
+        function walkChildren(container, olCounter) {
+          for (let i = 0; i < container.childNodes.length; i++) {
+            const child = container.childNodes[i];
+            if (child.nodeType === Node.TEXT_NODE) {
+              const t = child.textContent || '';
+              if (t.trim()) textAccum += (textAccum ? ' ' : '') + t.trim();
+              continue;
+            }
+            if (child.nodeType !== Node.ELEMENT_NODE) continue;
+
+            const el = child;
+            const tag = el.tagName && el.tagName.toLowerCase();
+
+            if (isSkippable(el)) continue;
+            if (!isVisible(el)) continue;
+
+            // role="button" on non-interactive elements
+            if (el.getAttribute('role') === 'button' && !INTERACTIVE_TAGS.has(tag) && tag !== 'a') {
+              flushAccum();
+              const t = el.textContent.trim();
+              if (t) lines.push('[按钮: ' + t + '] | ' + getShortSelector(el));
+              continue;
+            }
+
+            // Interactive leaf elements — output formatted, skip children
+            if (INTERACTIVE_TAGS.has(tag)) {
+              flushAccum();
+              const formatted = formatInteractive(el, tag);
+              if (formatted) lines.push(formatted + ' | ' + getShortSelector(el));
+              continue;
+            }
+
+            // Headings h1-h6
+            if (tag.length === 2 && tag[0] === 'h' && tag[1] >= '1' && tag[1] <= '6') {
+              flushAccum();
+              const level = parseInt(tag[1]);
+              walkChildren(el);
+              const headingText = textAccum.trim();
+              textAccum = '';
+              if (headingText) lines.push('#'.repeat(level) + ' ' + headingText);
+              continue;
+            }
+
+            // Images
+            if (tag === 'img') {
+              flushAccum();
+              const alt = el.getAttribute('alt');
+              if (alt && alt.trim()) lines.push('[图片: ' + alt.trim() + ']');
+              continue;
+            }
+
+            // Tables — recurse for content (cells are block-level)
+            if (tag === 'table' || tag === 'thead' || tag === 'tbody' || tag === 'tfoot' || tag === 'tr') {
+              walkChildren(el, olCounter);
+              flushAccum();
+              continue;
+            }
+
+            // Ordered lists
+            if (tag === 'ol') {
+              flushAccum();
+              walkChildren(el, { count: 0 });
+              continue;
+            }
+
+            // Unordered lists
+            if (tag === 'ul') {
+              flushAccum();
+              walkChildren(el, null);
+              continue;
+            }
+
+            // List items
+            if (tag === 'li') {
+              flushAccum();
+              walkChildren(el);
+              const liText = textAccum.trim();
+              textAccum = '';
+              if (liText) {
+                if (olCounter) {
+                  olCounter.count++;
+                  lines.push(olCounter.count + '. ' + liText);
+                } else {
+                  lines.push('- ' + liText);
+                }
+              }
+              continue;
+            }
+
+            // Block elements — flush before and after
+            if (BLOCK_TAGS.has(tag)) {
+              flushAccum();
+              walkChildren(el, olCounter);
+              flushAccum();
+              continue;
+            }
+
+            // Container elements — recurse and flush after
+            if (CONTAINER_TAGS.has(tag)) {
+              walkChildren(el, olCounter);
+              flushAccum();
+              continue;
+            }
+
+            // Default — recurse into unknown elements
+            walkChildren(el, olCounter);
+          }
+        }
+
+        const root = sel ? document.querySelector(sel) : document.body;
+        if (!root) return '';
+        walkChildren(root);
+        flushAccum();
+
+        let output = lines.join('\n');
+        if (output.length > MAX_OUTPUT) {
+          output = output.slice(0, MAX_OUTPUT) + '...（内容已截断）';
+        }
+        return output;
+      }, cleanedSelector || null);
 
       // 将文本保存到 .io/ 目录，避免大段文本占用 LLM 上下文
       const url = page.url();

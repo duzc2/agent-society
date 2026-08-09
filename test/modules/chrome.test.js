@@ -512,6 +512,17 @@ describe("ContentFeature", () => {
     const result = await contentFeature.getText("invalid-tab-id", undefined, { agent: { id: "test" } });
     assert.strictEqual(result.error, "tab_not_found");
   });
+
+  it("chrome_get_text 描述应包含结构化、标题、交互等关键词", () => {
+    const tools = contentFeature.getToolDefinitions();
+    const getTextTool = tools.find(t => t.function.name === "chrome_get_text");
+    assert.notStrictEqual(getTextTool, undefined);
+    const desc = getTextTool.function.description;
+    assert.ok(desc.includes("结构化"), `描述应包含"结构化": ${desc}`);
+    assert.ok(desc.includes("标题"), `描述应包含"标题": ${desc}`);
+    assert.ok(desc.includes("交互"), `描述应包含"交互": ${desc}`);
+    assert.ok(desc.includes("h1-h6"), `描述应包含"h1-h6": ${desc}`);
+  });
 });
 
 // ==================== ContentFeature IO File Storage ====================
@@ -552,9 +563,10 @@ describe("ContentFeature IO File Storage", () => {
   });
 
   it("getText saves to .io/ and returns { ok, files, url, source }", async () => {
+    const structText = "# 欢迎\n\n这是一段说明文字。\n[链接: 点击](https://example.com)\n[按钮: 提交]";
     const mockPage = {
       url: () => "https://www.example.com/page",
-      evaluate: mock.fn(async () => "Hello World from Example"),
+      evaluate: mock.fn(async () => structText),
       $: mock.fn(async () => null)
     };
     mockTabManager.getPage = mock.fn(() => mockPage);
@@ -574,7 +586,7 @@ describe("ContentFeature IO File Storage", () => {
     assert.strictEqual(writeCalls.length, 1);
     assert.strictEqual(writeCalls[0].arguments[0], "chrome");
     assert.strictEqual(writeCalls[0].arguments[1], "www.example.com");
-    assert.strictEqual(writeCalls[0].arguments[2], "Hello World from Example");
+    assert.strictEqual(writeCalls[0].arguments[2], structText);
   });
 
   it("getElements with ctx saves to .io/ and returns { ok, files, url, count, truncated, source }", async () => {
@@ -608,6 +620,163 @@ describe("ContentFeature IO File Storage", () => {
     const contentArg = writeCalls[0].arguments[2];
     assert.strictEqual(typeof contentArg, "string");
     assert.ok(contentArg.includes("Click Me"));
+  });
+
+  it("结构化文本输出应包含链接、标题、按钮等格式化标记", async () => {
+    const structText = [
+      "# 网站首页",
+      "",
+      "欢迎访问我们的网站。",
+      "[链接: 关于我们](https://example.com/about) | a.nav-link",
+      "[链接: 联系我们](https://example.com/contact) | a.nav-link:nth-child(2)",
+      "[按钮: 登录] | #login-btn",
+      "[输入框: text | 占位符: 请输入用户名] | #username",
+      "[密码框 | 占位符: 请输入密码] | input.password",
+      "[邮箱输入 | 占位符: e@e.com] | #email",
+      "[数字输入 | 占位符: 0] | input.age",
+      "[x] 记住我 | #remember",
+      "[*] 选项A | input[name=\"option\"]",
+      "[下拉框: 北京] | #city-select",
+      "[文本域 | 占位符: 输入描述] | #description",
+      "[图片: 产品照片]",
+      "- 项目一",
+      "- 项目二",
+      "1. 第一步",
+      "2. 第二步",
+      "## 最新消息",
+      "这是一篇新闻文章的内容。"
+    ].join("\n");
+
+    const mockPage = {
+      url: () => "https://www.example.com/page",
+      evaluate: mock.fn(async () => structText),
+      $: mock.fn(async () => null)
+    };
+    mockTabManager.getPage = mock.fn(() => mockPage);
+    const ctx = { agent: { id: "agent-2" } };
+
+    await contentFeature.getText("tab-1", undefined, ctx);
+    const writeCalls = mockWorkspace.writeFileToIO.mock.calls;
+    const output = writeCalls[writeCalls.length - 1].arguments[2];
+
+    assert.ok(output.includes("[链接:"), "输出应包含链接标记");
+    assert.ok(output.includes("[按钮:"), "输出应包含按钮标记");
+    assert.ok(output.includes("# "), "输出应包含标题标记");
+    assert.ok(output.includes("[输入框:"), "输出应包含输入框标记");
+    assert.ok(output.includes("[密码框"), "输出应包含密码框标记");
+    assert.ok(output.includes("[邮箱输入"), "输出应包含邮箱输入标记");
+    assert.ok(output.includes("[数字输入"), "输出应包含数字输入标记");
+    assert.ok(output.includes("[x] "), "输出应包含已选复选框标记");
+    assert.ok(output.includes("[*] "), "输出应包含已选单选框标记");
+    assert.ok(output.includes("[下拉框:"), "输出应包含下拉框标记");
+    assert.ok(output.includes("[文本域"), "输出应包含文本域标记");
+    assert.ok(output.includes("[图片:"), "输出应包含图片标记");
+    assert.ok(output.includes("- "), "输出应包含无序列表标记");
+    assert.ok(output.includes("1. "), "输出应包含有序列表标记");
+    // 选择器验证
+    assert.ok(output.includes("| #login-btn"), "按钮应包含 id 选择器");
+    assert.ok(output.includes("| a.nav-link"), "链接应包含类选择器");
+    assert.ok(output.includes("| #username"), "输入框应包含选择器");
+    assert.ok(output.includes("| #remember"), "复选框应包含选择器");
+  });
+
+  it("每个可交互元素应附带最短 CSS 选择器", async () => {
+    const textWithSelectors = [
+      "[按钮: 提交] | #submit",
+      "[链接: Home](https://example.com) | a.nav-link",
+      "[输入框: text | 占位符: 搜索] | input.search-input",
+      "[下拉框: 北京] | #city",
+      "[文本域 | 占位符: 备注] | textarea.notes",
+      "[密码框 | 占位符: 密码] | input[type=\"password\"]",
+      "[x] 同意条款 | #agree",
+      "[*] 选项B | input[name=\"choice\"]:nth-child(2)",
+      "[按钮: 开始] | #start-btn"
+    ].join("\n");
+
+    const mockPage = {
+      url: () => "https://www.example.com/form",
+      evaluate: mock.fn(async () => textWithSelectors),
+      $: mock.fn(async () => null)
+    };
+    mockTabManager.getPage = mock.fn(() => mockPage);
+    const ctx = { agent: { id: "agent-3" } };
+
+    await contentFeature.getText("tab-1", undefined, ctx);
+    const writeCalls = mockWorkspace.writeFileToIO.mock.calls;
+    const output = writeCalls[writeCalls.length - 1].arguments[2];
+
+    // 每种交互元素类型都应带有选择器
+    const hasSelector = (line) => line.includes(" | ") && line.includes("[");
+    const lines = output.split("\n").filter(l => l.trim());
+    const interactiveLines = lines.filter(l => l.startsWith("["));
+    assert.ok(interactiveLines.length >= 2, "应至少有两个交互元素行");
+    // 所有交互元素行都应包含 " | " 选择器分隔符
+    for (const line of interactiveLines) {
+      assert.ok(line.includes(" | "), `交互元素行应包含选择器: "${line}"`);
+    }
+  });
+
+  it("隐藏元素不应出现在输出中", async () => {
+    const textWithoutHidden = "# 可见标题\n\n可见段落内容。";
+    const mockPage = {
+      url: () => "https://www.example.com/page",
+      evaluate: mock.fn(async () => textWithoutHidden),
+      $: mock.fn(async () => null)
+    };
+    mockTabManager.getPage = mock.fn(() => mockPage);
+    const ctx = { agent: { id: "agent-3" } };
+
+    await contentFeature.getText("tab-1", undefined, ctx);
+    const writeCalls = mockWorkspace.writeFileToIO.mock.calls;
+    const output = writeCalls[writeCalls.length - 1].arguments[2];
+
+    assert.ok(!output.includes("隐藏"), "输出不应包含隐藏内容");
+    assert.ok(!output.includes("display:none"), "输出不应包含隐藏样式文本");
+    assert.ok(!output.includes("invisible"), "输出不应包含不可见文本");
+  });
+
+  it("交互元素文本只应出现一次，不应在标记和纯文本中重复", async () => {
+    // 模拟输出中 Click Me 仅在链接标记中出现一次
+    const dedupText = "# 页面\n\n欢迎来到我们的网站。\n[链接: Click Me](https://example.com)";
+    const mockPage = {
+      url: () => "https://www.example.com/page",
+      evaluate: mock.fn(async () => dedupText),
+      $: mock.fn(async () => null)
+    };
+    mockTabManager.getPage = mock.fn(() => mockPage);
+    const ctx = { agent: { id: "agent-4" } };
+
+    await contentFeature.getText("tab-1", undefined, ctx);
+    const writeCalls = mockWorkspace.writeFileToIO.mock.calls;
+    const output = writeCalls[writeCalls.length - 1].arguments[2];
+
+    // 验证 Click Me 出现在链接标记中
+    assert.ok(output.includes("[链接: Click Me]"), "链接文本应出现在标记中");
+
+    // 验证 Click Me 不会再次作为纯文本出现
+    // 去掉第一行 "[链接: Click Me](...)" 后不应再有 "Click Me"
+    const withoutLinkLine = output.replace(/\[链接: Click Me\]\(.*\)/, "");
+    assert.ok(!withoutLinkLine.includes("Click Me"), "链接文本不应作为纯文本再次出现");
+  });
+
+  it("超过50000字符的输出应被截断并追加截断提示", async () => {
+    // 模拟浏览器端 getStructuredText 返回已截断的文本（截断在 evaluate 内完成）
+    const truncatedText = "A".repeat(50000) + "...（内容已截断）";
+
+    const mockPage = {
+      url: () => "https://www.example.com/big-page",
+      evaluate: mock.fn(async () => truncatedText),
+      $: mock.fn(async () => null)
+    };
+    mockTabManager.getPage = mock.fn(() => mockPage);
+    const ctx = { agent: { id: "agent-5" } };
+
+    await contentFeature.getText("tab-1", undefined, ctx);
+    const writeCalls = mockWorkspace.writeFileToIO.mock.calls;
+    const output = writeCalls[writeCalls.length - 1].arguments[2];
+
+    assert.ok(output.endsWith("...（内容已截断）"), "截断输出应以截断提示结尾");
+    assert.ok(output.length > 50000, "截断后输出应接近50000字符上限");
   });
 });
 
