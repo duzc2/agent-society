@@ -330,21 +330,24 @@ describe("ComputeScheduler._applyCacheControlToLastContentBlock", () => {
     scheduler = new ComputeScheduler(mockRuntime, mockTurnEngine);
   });
 
-  it("string content 应转为 content block 数组并添加 cacheControl", () => {
+  it("string content 应转为 content block 数组并添加 cacheControl，且不修改原始对象", () => {
     const msg = { role: "user", content: "hello world" };
-    scheduler._applyCacheControlToLastContentBlock(msg);
+    const result = scheduler._applyCacheControlToLastContentBlock(msg);
 
-    assert.ok(Array.isArray(msg.content), "content 应变为数组");
-    assert.strictEqual(msg.content.length, 1);
-    assert.strictEqual(msg.content[0].type, "text");
-    assert.strictEqual(msg.content[0].text, "hello world");
+    assert.ok(Array.isArray(result.content), "content 应变为数组");
+    assert.strictEqual(result.content.length, 1);
+    assert.strictEqual(result.content[0].type, "text");
+    assert.strictEqual(result.content[0].text, "hello world");
     assert.deepStrictEqual(
-      msg.content[0].providerOptions.anthropic.cacheControl,
+      result.content[0].providerOptions.anthropic.cacheControl,
       { type: "ephemeral" }
     );
+    // 原始对象不应被修改
+    assert.strictEqual(typeof msg.content, "string");
+    assert.strictEqual(msg.content, "hello world");
   });
 
-  it("已有内容块数组时应在最后一个块上添加 providerOptions", () => {
+  it("已有内容块数组时应在最后一个块上添加 providerOptions，且不修改原始对象", () => {
     const msg = {
       role: "assistant",
       content: [
@@ -352,39 +355,48 @@ describe("ComputeScheduler._applyCacheControlToLastContentBlock", () => {
         { type: "text", text: "part 2" }
       ]
     };
-    scheduler._applyCacheControlToLastContentBlock(msg);
+    const result = scheduler._applyCacheControlToLastContentBlock(msg);
 
     // 第一个块不应有 providerOptions
-    assert.strictEqual(msg.content[0].providerOptions, undefined);
+    assert.strictEqual(result.content[0].providerOptions, undefined);
     // 最后一个块应有 cacheControl
-    assert.strictEqual(msg.content[1].type, "text");
+    assert.strictEqual(result.content[1].type, "text");
     assert.deepStrictEqual(
-      msg.content[1].providerOptions.anthropic.cacheControl,
+      result.content[1].providerOptions.anthropic.cacheControl,
       { type: "ephemeral" }
     );
+    // 原始对象不应被修改
+    assert.strictEqual(msg.content[0].providerOptions, undefined);
+    assert.strictEqual(msg.content[1].providerOptions, undefined);
   });
 
-  it("空数组 content 不报错也不修改", () => {
+  it("空数组 content 不报错且返回副本为相同空数组", () => {
     const msg = { role: "user", content: [] };
+    let result;
     assert.doesNotThrow(() => {
-      scheduler._applyCacheControlToLastContentBlock(msg);
+      result = scheduler._applyCacheControlToLastContentBlock(msg);
     });
-    assert.deepStrictEqual(msg.content, []);
+    assert.deepStrictEqual(result.content, []);
+    assert.notStrictEqual(result, msg, "返回的应是深拷贝副本");
   });
 
-  it("null message 不报错", () => {
+  it("null message 不报错且返回 null", () => {
+    let result;
     assert.doesNotThrow(() => {
-      scheduler._applyCacheControlToLastContentBlock(null);
+      result = scheduler._applyCacheControlToLastContentBlock(null);
     });
+    assert.strictEqual(result, null);
   });
 
-  it("undefined message 不报错", () => {
+  it("undefined message 不报错且返回 undefined", () => {
+    let result;
     assert.doesNotThrow(() => {
-      scheduler._applyCacheControlToLastContentBlock(undefined);
+      result = scheduler._applyCacheControlToLastContentBlock(undefined);
     });
+    assert.strictEqual(result, undefined);
   });
 
-  it("已有其他 providerOptions 时应合并而非覆盖", () => {
+  it("已有其他 providerOptions 时应合并而非覆盖，且不修改原始对象", () => {
     const msg = {
       role: "user",
       content: [
@@ -397,9 +409,9 @@ describe("ComputeScheduler._applyCacheControlToLastContentBlock", () => {
         }
       ]
     };
-    scheduler._applyCacheControlToLastContentBlock(msg);
+    const result = scheduler._applyCacheControlToLastContentBlock(msg);
 
-    const opts = msg.content[0].providerOptions;
+    const opts = result.content[0].providerOptions;
     // 已有的 openai 选项应保留
     assert.deepStrictEqual(opts.openai, { maxCompletionTokens: 100 });
     // 同时添加 anthropic cacheControl
@@ -407,9 +419,11 @@ describe("ComputeScheduler._applyCacheControlToLastContentBlock", () => {
       opts.anthropic.cacheControl,
       { type: "ephemeral" }
     );
+    // 原始对象不应被修改（无 anthropic 选项）
+    assert.deepStrictEqual(msg.content[0].providerOptions, { openai: { maxCompletionTokens: 100 } });
   });
 
-  it("已有 anthropic 其他选项时应合并而非覆盖", () => {
+  it("已有 anthropic 其他选项时应合并而非覆盖，且不修改原始对象", () => {
     const msg = {
       role: "user",
       content: [
@@ -422,43 +436,167 @@ describe("ComputeScheduler._applyCacheControlToLastContentBlock", () => {
         }
       ]
     };
-    scheduler._applyCacheControlToLastContentBlock(msg);
+    const result = scheduler._applyCacheControlToLastContentBlock(msg);
 
-    const opts = msg.content[0].providerOptions;
+    const opts = result.content[0].providerOptions;
     assert.strictEqual(opts.anthropic.maxTokens, 1000);
     assert.deepStrictEqual(
       opts.anthropic.cacheControl,
       { type: "ephemeral" }
     );
+    // 原始对象不应被修改（无 cacheControl）
+    assert.deepStrictEqual(msg.content[0].providerOptions, { anthropic: { maxTokens: 1000 } });
   });
 
-  it("空字符串 content 应正确转为数组", () => {
+  it("空字符串 content 应正确转为数组，且不修改原始对象", () => {
     const msg = { role: "assistant", content: "" };
-    scheduler._applyCacheControlToLastContentBlock(msg);
+    const result = scheduler._applyCacheControlToLastContentBlock(msg);
 
-    assert.ok(Array.isArray(msg.content));
-    assert.strictEqual(msg.content.length, 1);
-    assert.strictEqual(msg.content[0].type, "text");
-    assert.strictEqual(msg.content[0].text, "");
+    assert.ok(Array.isArray(result.content));
+    assert.strictEqual(result.content.length, 1);
+    assert.strictEqual(result.content[0].type, "text");
+    assert.strictEqual(result.content[0].text, "");
     assert.deepStrictEqual(
-      msg.content[0].providerOptions.anthropic.cacheControl,
+      result.content[0].providerOptions.anthropic.cacheControl,
       { type: "ephemeral" }
     );
+    // 原始对象不应被修改
+    assert.strictEqual(typeof msg.content, "string");
+    assert.strictEqual(msg.content, "");
   });
 
-  it("content 为数字 0 时应正确转为数组（非假值比较）", () => {
+  it("content 为数字 0 时返回深拷贝且不修改（非假值比较）", () => {
     const msg = { role: "user", content: 0 };
-    scheduler._applyCacheControlToLastContentBlock(msg);
+    const result = scheduler._applyCacheControlToLastContentBlock(msg);
 
     // typeof 0 === "number" 不是 "string"，所以不会被转换
-    // 但 Array.isArray 检查失败，函数提前返回，不修改
-    // 这是当前行为——只处理 string 和 array，不处理其他类型
+    // 但 Array.isArray 检查失败，返回深拷贝副本
+    assert.strictEqual(typeof result.content, "number");
+    assert.strictEqual(result.content, 0);
+    // 原始对象不应被修改
     assert.strictEqual(typeof msg.content, "number");
     assert.strictEqual(msg.content, 0);
+    assert.notStrictEqual(result, msg, "返回的应是深拷贝副本");
   });
 });
 
-// ==================== 跨层交互：浅拷贝 + 原地修改 ====================
+// ==================== _clearAllCacheControl ====================
+
+describe("ComputeScheduler._clearAllCacheControl", () => {
+  /** @type {ComputeScheduler} */
+  let scheduler;
+
+  beforeEach(() => {
+    const mockRuntime = createMockRuntime();
+    const mockTurnEngine = createMockTurnEngine();
+    scheduler = new ComputeScheduler(mockRuntime, mockTurnEngine);
+  });
+
+  it("应清除内容块级别的 cacheControl", () => {
+    const messages = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "hello", providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } }
+        ]
+      }
+    ];
+    scheduler._clearAllCacheControl(messages);
+    assert.strictEqual(messages[0].content[0].providerOptions.anthropic.cacheControl, undefined);
+  });
+
+  it("应清除消息级别的 cacheControl", () => {
+    const messages = [
+      {
+        role: "system",
+        content: "system prompt",
+        providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } }
+      }
+    ];
+    scheduler._clearAllCacheControl(messages);
+    assert.strictEqual(messages[0].providerOptions.anthropic.cacheControl, undefined);
+  });
+
+  it("应同时清除两种级别的 cacheControl", () => {
+    const messages = [
+      {
+        role: "system",
+        content: "system prompt",
+        providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } }
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "msg1", providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } },
+          { type: "text", text: "msg2", providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } }
+        ]
+      }
+    ];
+    scheduler._clearAllCacheControl(messages);
+    assert.strictEqual(messages[0].providerOptions.anthropic.cacheControl, undefined);
+    assert.strictEqual(messages[1].content[0].providerOptions.anthropic.cacheControl, undefined);
+    assert.strictEqual(messages[1].content[1].providerOptions.anthropic.cacheControl, undefined);
+  });
+
+  it("空数组 / null / undefined 不报错", () => {
+    assert.doesNotThrow(() => scheduler._clearAllCacheControl([]));
+    assert.doesNotThrow(() => scheduler._clearAllCacheControl(null));
+    assert.doesNotThrow(() => scheduler._clearAllCacheControl(undefined));
+  });
+
+  it("清除后其他 providerOptions 不受影响", () => {
+    const messages = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "hello",
+            providerOptions: {
+              openai: { maxCompletionTokens: 100 },
+              anthropic: { maxTokens: 1000, cacheControl: { type: "ephemeral" } }
+            }
+          }
+        ]
+      }
+    ];
+    scheduler._clearAllCacheControl(messages);
+    const opts = messages[0].content[0].providerOptions;
+    assert.deepStrictEqual(opts.openai, { maxCompletionTokens: 100 });
+    assert.strictEqual(opts.anthropic.maxTokens, 1000);
+    assert.strictEqual(opts.anthropic.cacheControl, undefined);
+  });
+
+  it("集成：清除 + 重建后最终只有 1 个消息级断点（不会累积）", () => {
+    const messages = [
+      { role: "user", content: "msg1" },
+      { role: "assistant", content: "msg2" },
+      { role: "user", content: "msg3" }
+    ];
+
+    // 第一轮：清除 → 设置断点（在 msg2 上）
+    scheduler._clearAllCacheControl(messages);
+    const stableIdx1 = messages.length - 2;
+    messages[stableIdx1] = scheduler._applyCacheControlToLastContentBlock(messages[stableIdx1]);
+
+    const cacheControlMessages1 = messages.filter(msg =>
+      Array.isArray(msg.content) && msg.content.some(b => b?.providerOptions?.anthropic?.cacheControl)
+    );
+    assert.strictEqual(cacheControlMessages1.length, 1, "第一轮后应有 1 个消息级断点");
+
+    // 清除后重新设置，应仍然是 1 个
+    scheduler._clearAllCacheControl(messages);
+    const stableIdx2 = messages.length - 2;
+    messages[stableIdx2] = scheduler._applyCacheControlToLastContentBlock(messages[stableIdx2]);
+
+    const cacheControlMessages2 = messages.filter(msg =>
+      Array.isArray(msg.content) && msg.content.some(b => b?.providerOptions?.anthropic?.cacheControl)
+    );
+    assert.strictEqual(cacheControlMessages2.length, 1, "清除+重建后仍应只有 1 个消息级断点，不会累积到 2 个");
+  });
+});
+
+// ==================== 跨层交互：浅拷贝 + mutation ====================
 
 describe("ComputeScheduler 跨层交互（浅拷贝 + mutation）", () => {
   /** @type {ComputeScheduler} */
@@ -471,36 +609,31 @@ describe("ComputeScheduler 跨层交互（浅拷贝 + mutation）", () => {
   });
 
   // ================================================================
-  // 当前已知行为：appendEphemeralToMessages 做浅拷贝（slice），
-  // _applyCacheControlToLastContentBlock 原地修改消息对象。
-  // 因此原始 messages 数组中的对象也会被修改（content 从 string 变数组）。
-  // 这可能导致下轮 LLM 调用时 content 格式不对。
-  // 这些测试文档化当前行为，不是 bug fix。
+  // appendEphemeralToMessages 做浅拷贝（slice），
+  // _applyCacheControlToLastContentBlock 返回深拷贝（不再原地修改）。
+  // 因此原始 messages 数组中的对象不会被修改。
   // ================================================================
 
-  it("浅拷贝后 mutation 会污染原始对象", () => {
+  it("_applyCacheControlToLastContentBlock 深拷贝后不应污染原始对象", () => {
     const originalConvs = [
       { role: "user", content: "msg1" },
       { role: "assistant", content: "msg2" },
       { role: "user", content: "last user" }
     ];
-
-    // 模拟 appendEphemeralToMessages 的浅拷贝行为
     const shallowCopy = originalConvs.slice();
-    // 插入一条记忆消息
     const memoryMsg = { role: "user", content: "[memory context]", _ephemeral: true };
     shallowCopy.splice(shallowCopy.length - 1, 0, memoryMsg);
 
-    // 模拟 _applyCacheControlToLastContentBlock 原地修改
-    const cacheTarget = shallowCopy[shallowCopy.length - 3]; // "msg2"
-    cacheTarget.content = [
-      { type: "text", text: cacheTarget.content, providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } }
-    ];
+    const cacheTarget = shallowCopy[shallowCopy.length - 3];
+    const result = scheduler._applyCacheControlToLastContentBlock(cacheTarget);
+    shallowCopy[shallowCopy.length - 3] = result;
 
-    // 浅拷贝不创建新对象 → originalConvs[1] 也被修改
-    assert.ok(Array.isArray(originalConvs[1].content),
-      "浅拷贝的原地修改污染了 originalConvs —— 这是当前已知行为");
-    assert.strictEqual(originalConvs[1].content[0].text, "msg2");
+    // 返回的拷贝应被正确改造
+    assert.ok(Array.isArray(result.content));
+    assert.strictEqual(result.content[0].providerOptions.anthropic.cacheControl.type, "ephemeral");
+    // 原始对象不应被修改
+    assert.strictEqual(typeof originalConvs[1].content, "string");
+    assert.strictEqual(originalConvs[1].content, "msg2");
   });
 
   it("浅拷贝的数组结构独立，但元素对象共享引用", () => {
@@ -638,10 +771,11 @@ describe("ComputeScheduler 跨层交互（浅拷贝 + mutation）", () => {
 });
 
 // ==================== P2: 缓存断点计数验证 ====================
-// 验证完整的 LLM 调用中 3 个缓存断点都存在：
-// 1. system prompt（在 llm_client.js 中设置）
-// 2. 最后一个 tool definition（在 llm_client.js 中设置）
-// 3. 稳定消息（在 compute_scheduler._applyCacheControlToLastContentBlock 中设置）
+// 验证完整的 LLM 调用中 3 个缓存断点都存在（不超过 Anthropic 的 4 个限制）：
+// 1. system prompt（llm_client.js — 固定 1 个）
+// 2. 最后一个 tool definition（llm_client.js — 固定 1 个）
+// 3. 稳定消息（compute_scheduler.js — 清除旧断点后重建，固定 1 个）
+// 总计：1 + 1 + 1 = 3 < 4 ✓
 //
 // 缓存断点 1 和 2 由 llm_client._chatWithRetry 负责设置，在此通过模拟
 // _startLlm 的完整流程验证断点 3 的格式正确性。
@@ -658,9 +792,9 @@ describe("缓存断点计数验证", () => {
 
   it("_applyCacheControlToLastContentBlock 应正确设置 ephemeral 缓存断点类型", () => {
     const msg = { role: "user", content: "stable message" };
-    scheduler._applyCacheControlToLastContentBlock(msg);
+    const result = scheduler._applyCacheControlToLastContentBlock(msg);
 
-    const lastBlock = msg.content[msg.content.length - 1];
+    const lastBlock = result.content[result.content.length - 1];
     assert.strictEqual(
       lastBlock.providerOptions.anthropic.cacheControl.type,
       "ephemeral",
@@ -676,8 +810,8 @@ describe("缓存断点计数验证", () => {
     ];
 
     for (const msg of messages) {
-      scheduler._applyCacheControlToLastContentBlock(msg);
-      const lastBlock = msg.content[msg.content.length - 1];
+      const result = scheduler._applyCacheControlToLastContentBlock(msg);
+      const lastBlock = result.content[result.content.length - 1];
       assert.strictEqual(
         lastBlock.providerOptions.anthropic.cacheControl.type,
         "ephemeral",
@@ -688,9 +822,9 @@ describe("缓存断点计数验证", () => {
 
   it("缓存断点的 providerOptions 结构应完整", () => {
     const msg = { role: "assistant", content: "test" };
-    scheduler._applyCacheControlToLastContentBlock(msg);
+    const result = scheduler._applyCacheControlToLastContentBlock(msg);
 
-    const lastBlock = msg.content[msg.content.length - 1];
+    const lastBlock = result.content[result.content.length - 1];
     assert.ok(
       lastBlock.providerOptions,
       "应包含 providerOptions"

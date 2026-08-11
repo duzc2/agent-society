@@ -696,10 +696,13 @@ export class ComputeScheduler {
     // 替换 outcome.request.messages（仅用于本次 LLM 调用，turn.conv 不变）
     outcome.request.messages = enhancedMessages;
 
+    // 清除上一轮残留的缓存断点，防止跨轮次累积超过 4 个断点限制
+    this._clearAllCacheControl(enhancedMessages);
+
     // 在记忆注入前的最后一条稳定消息上设置缓存断点
     const stableCacheIdx = this._findStableMessageCacheIndex(enhancedMessages, injectionIndex);
     if (stableCacheIdx >= 0) {
-      this._applyCacheControlToLastContentBlock(enhancedMessages[stableCacheIdx]);
+      enhancedMessages[stableCacheIdx] = this._applyCacheControlToLastContentBlock(enhancedMessages[stableCacheIdx]);
     }
 
     // 构造消息摘要：使用增强后的消息（已注入 ephemeral memory）
@@ -861,19 +864,46 @@ export class ComputeScheduler {
   }
 
   /**
+   * 清除所有消息上的旧缓存断点，防止跨轮次累积超过 Anthropic 的 4 个断点限制。
+   * 同时清除消息级别和内容块级别的 cacheControl。
+   * @param {any[]|undefined} messages
+   * @private
+   */
+  _clearAllCacheControl(messages) {
+    if (!Array.isArray(messages)) return;
+    for (const msg of messages) {
+      if (!msg) continue;
+      // 消息级别的 cacheControl
+      if (msg.providerOptions?.anthropic?.cacheControl) {
+        delete msg.providerOptions.anthropic.cacheControl;
+      }
+      // 内容块级别的 cacheControl
+      if (!Array.isArray(msg.content)) continue;
+      for (const block of msg.content) {
+        if (block?.providerOptions?.anthropic?.cacheControl) {
+          delete block.providerOptions.anthropic.cacheControl;
+        }
+      }
+    }
+  }
+
+  /**
    * 在消息的最后一个内容块上设置 ephemeral 缓存断点。
    * 将字符串 content 转换为 content block 数组以支持 providerOptions。
-   * @param {any} message - 可修改的消息对象
+   * 返回深拷贝，避免 mutation 泄露到 turn.conv 中的原始消息对象。
+   * @param {any} message
+   * @returns {any} 深拷贝后的新消息对象
    * @private
    */
   _applyCacheControlToLastContentBlock(message) {
-    if (!message) return;
-    // 统一转为 content block 数组
-    if (typeof message.content === "string") {
-      message.content = [{ type: "text", text: message.content }];
+    if (!message) return message;
+    // 深拷贝，防止 mutation 泄露到 turn.conv
+    const copy = structuredClone(message);
+    if (typeof copy.content === "string") {
+      copy.content = [{ type: "text", text: copy.content }];
     }
-    if (!Array.isArray(message.content) || message.content.length === 0) return;
-    const lastBlock = message.content[message.content.length - 1];
+    if (!Array.isArray(copy.content) || copy.content.length === 0) return copy;
+    const lastBlock = copy.content[copy.content.length - 1];
     if (typeof lastBlock === "object" && lastBlock !== null) {
       lastBlock.providerOptions = {
         ...(lastBlock.providerOptions || {}),
@@ -883,6 +913,7 @@ export class ComputeScheduler {
         }
       };
     }
+    return copy;
   }
 
   /**
