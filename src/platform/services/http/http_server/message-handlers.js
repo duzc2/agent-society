@@ -80,24 +80,49 @@ async function registerMessageRoutes({ app, log, society, runtimeDir }) {
   const getConversationsDir = () => path.join(society.runtime.config.runtimeDir, "conversations");
   const ensureMessagesDir = () => mkdir(getMessagesDir(), { recursive: true });
 
-  // ===== 文件读写 =====
+  // ===== 全局消息文件写队列：串行化 append / rewrite / clear / repair，避免并发写损坏 =====
 
-  async function appendMessageToFile(agentId, msg) {
-    await ensureMessagesDir();
-    try {
-      await appendFile(path.join(getMessagesDir(), `${agentId}.jsonl`), JSON.stringify(msg) + "\n", "utf8");
-    } catch (err) {
-      void log.error("追加消息到文件失败", { agentId, error: err?.message ?? String(err), stack: err?.stack, name: err?.name, code: err?.code });
-    }
+  let messageFileWriteQueue = Promise.resolve();
+
+  function enqueueMessageFileWrite(fn) {
+    const next = messageFileWriteQueue.then(fn, fn);
+    messageFileWriteQueue = next.then(() => {}, () => {});
+    return next;
   }
 
-  async function rewriteMessagesFile(agentId, msgs) {
-    await ensureMessagesDir();
-    try {
-      await writeFile(path.join(getMessagesDir(), `${agentId}.jsonl`), msgs.map(m => JSON.stringify(m)).join("\n") + "\n", "utf8");
-    } catch (err) {
-      void log.error("重写消息文件失败", { agentId, error: err?.message ?? String(err), stack: err?.stack, name: err?.name, code: err?.code });
-    }
+  // ===== 文件读写 =====
+
+  function appendMessageToFile(agentId, msg) {
+    return enqueueMessageFileWrite(async () => {
+      await ensureMessagesDir();
+      try {
+        await appendFile(path.join(getMessagesDir(), `${agentId}.jsonl`), JSON.stringify(msg) + "\n", "utf8");
+      } catch (err) {
+        void log.error("追加消息到文件失败", { agentId, error: err?.message ?? String(err), stack: err?.stack, name: err?.name, code: err?.code });
+      }
+    });
+  }
+
+  function rewriteMessagesFile(agentId, msgs) {
+    return enqueueMessageFileWrite(async () => {
+      await ensureMessagesDir();
+      try {
+        await writeFile(path.join(getMessagesDir(), `${agentId}.jsonl`), msgs.map(m => JSON.stringify(m)).join("\n") + "\n", "utf8");
+      } catch (err) {
+        void log.error("重写消息文件失败", { agentId, error: err?.message ?? String(err), stack: err?.stack, name: err?.name, code: err?.code });
+      }
+    });
+  }
+
+  function clearMessagesFile(agentId) {
+    return enqueueMessageFileWrite(async () => {
+      await ensureMessagesDir();
+      try {
+        await writeFile(path.join(getMessagesDir(), `${agentId}.jsonl`), "", "utf8");
+      } catch (err) {
+        void log.error("清空消息文件失败", { agentId, error: err?.message ?? String(err), stack: err?.stack, name: err?.name, code: err?.code });
+      }
+    });
   }
 
   // ===== 会话快照 =====
@@ -168,35 +193,64 @@ async function registerMessageRoutes({ app, log, society, runtimeDir }) {
 
   async function loadMessagesForAgent(agentId) {
     if (messagesByAgent.has(agentId)) return messagesByAgent.get(agentId);
-    const fp = path.join(getMessagesDir(), `${agentId}.jsonl`);
-    const msgs = [];
-    const localIds = new Set();
-    try {
-      if (!existsSync(fp)) return await loadMessagesFromConversationFallback(agentId);
-      const lines = (await readFile(fp, "utf8")).split("\n").filter(l => l.trim());
-      for (const line of lines) {
-        try {
-          const parsed = JSON.parse(line);
-          if (parsed._ref && !parsed.id) continue;
-          const msg = normalizeMessageUsage(parsed);
-          if (!localIds.has(msg.id)) { msgs.push(msg); localIds.add(msg.id); messagesById.set(msg.id, msg); }
-          else {
-            const existing = messagesById.get(msg.id);
-            if (existing && msg.payload?.result && !existing.payload?.result) { existing.payload.result = msg.payload.result; if (msg.payload.usage) existing.payload.usage = msg.payload.usage; if (msg.reasoning_content) existing.reasoning_content = msg.reasoning_content; }
+
+    return enqueueMessageFileWrite(async () => {
+      if (messagesByAgent.has(agentId)) return messagesByAgent.get(agentId);
+
+      const fp = path.join(getMessagesDir(), `${agentId}.jsonl`);
+      const msgs = [];
+      const localIds = new Set();
+      let hadParseError = false;
+
+      try {
+        if (!existsSync(fp)) return await loadMessagesFromConversationFallback(agentId);
+
+        const lines = (await readFile(fp, "utf8")).split("\n").filter(l => l.trim());
+        for (const line of lines) {
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed._ref && !parsed.id) continue;
+            const msg = normalizeMessageUsage(parsed);
+            if (!localIds.has(msg.id)) {
+              msgs.push(msg);
+              localIds.add(msg.id);
+              messagesById.set(msg.id, msg);
+            } else {
+              const existing = messagesById.get(msg.id);
+              if (existing && msg.payload?.result && !existing.payload?.result) {
+                existing.payload.result = msg.payload.result;
+                if (msg.payload.usage) existing.payload.usage = msg.payload.usage;
+                if (msg.reasoning_content) existing.reasoning_content = msg.reasoning_content;
+              }
+            }
+          } catch (parseErr) {
+            hadParseError = true;
+            void log.warn("消息解析失败，已跳过", { agentId, rawLine: line.substring(0, 500), lineLength: line.length, error: parseErr.message, stack: parseErr?.stack, name: parseErr?.name, code: parseErr?.code });
           }
-        } catch (parseErr) {
-          void log.warn("消息解析失败，已跳过", { agentId, rawLine: line.substring(0, 500), lineLength: line.length, error: parseErr.message, stack: parseErr?.stack, name: parseErr?.name, code: parseErr?.code });
         }
+
+        await mergeConversationSnapshotMetadata(agentId, msgs);
+        msgs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+        if (hadParseError) {
+          const content = msgs.length ? msgs.map(m => JSON.stringify(m)).join("\n") + "\n" : "";
+          try {
+            await writeFile(fp, content, "utf8");
+            void log.warn("检测到消息文件损坏，已用有效消息重写修复", { agentId, validCount: msgs.length });
+          } catch (repairErr) {
+            void log.error("修复消息文件失败", { agentId, error: repairErr?.message ?? String(repairErr), stack: repairErr?.stack, name: repairErr?.name, code: repairErr?.code });
+          }
+        }
+
+        if (msgs.length === 0) return await loadMessagesFromConversationFallback(agentId);
+        messagesByAgent.set(agentId, msgs);
+      } catch (err) {
+        void log.warn("加载消息文件失败", { agentId, error: err?.message ?? String(err), stack: err?.stack, name: err?.name, code: err?.code });
+        return await loadMessagesFromConversationFallback(agentId);
       }
-      await mergeConversationSnapshotMetadata(agentId, msgs);
-      msgs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-      if (msgs.length === 0) return await loadMessagesFromConversationFallback(agentId);
-      messagesByAgent.set(agentId, msgs);
-    } catch (err) {
-      void log.warn("加载消息文件失败", { agentId, error: err?.message ?? String(err), stack: err?.stack, name: err?.name, code: err?.code });
-      return await loadMessagesFromConversationFallback(agentId);
-    }
-    return msgs;
+
+      return msgs;
+    });
   }
 
   function getRegenerableMessageId(agentId) {
@@ -303,14 +357,17 @@ async function registerMessageRoutes({ app, log, society, runtimeDir }) {
     }
   }
 
-  async function rewriteMessageLog(agentId) {
+  function rewriteMessageLog(agentId) {
     const msgs = messagesByAgent.get(agentId);
-    if (!msgs) return;
-    try {
-      await writeFile(path.join(getMessagesDir(), `${agentId}.jsonl`), msgs.map(m => JSON.stringify(m)).join("\n") + "\n", "utf8");
-    } catch (err) {
-      void log.error("重写消息日志失败", { agentId, error: err?.message ?? String(err), stack: err?.stack, name: err?.name, code: err?.code });
-    }
+    if (!msgs) return Promise.resolve();
+    return enqueueMessageFileWrite(async () => {
+      await ensureMessagesDir();
+      try {
+        await writeFile(path.join(getMessagesDir(), `${agentId}.jsonl`), msgs.map(m => JSON.stringify(m)).join("\n") + "\n", "utf8");
+      } catch (err) {
+        void log.error("重写消息日志失败", { agentId, error: err?.message ?? String(err), stack: err?.stack, name: err?.name, code: err?.code });
+      }
+    });
   }
 
   async function removeMsgFromAgentLogs(messageIds) {
@@ -485,7 +542,7 @@ async function registerMessageRoutes({ app, log, society, runtimeDir }) {
       if (messagesByAgent.has(agentId)) {
         clearAgentMessageIndexes(agentId);
         messagesByAgent.set(agentId, []);
-        await writeFile(path.join(getMessagesDir(), `${agentId}.jsonl`), "", "utf8");
+        await clearMessagesFile(agentId);
       }
       await storeMessage({ id: randomUUID(), from: agentId, to: agentId, taskId: null, payload: { text: "--- 新会话 ---" }, createdAt: new Date().toISOString() });
       return c.json({ ok: true });
@@ -634,7 +691,7 @@ async function registerMessageRoutes({ app, log, society, runtimeDir }) {
       if (messagesByAgent.has(agentId)) {
         clearAgentMessageIndexes(agentId);
         messagesByAgent.set(agentId, []);
-        await writeFile(path.join(getMessagesDir(), `${agentId}.jsonl`), "", "utf8");
+        await clearMessagesFile(agentId);
       }
       return c.json({ ok: true });
     } catch (err) { return c.json({ error: "internal_error", message: err.message }, 500); }
