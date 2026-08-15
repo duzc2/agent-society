@@ -550,6 +550,32 @@ describe("LlmClient", () => {
         assert.strictEqual(toolBlock.output.value, "some_result");
       });
 
+      it("相同 tool_call_id 的重复 tool 消息应只保留第一条", async () => {
+        const client = new LlmClient({
+          configService: createConfigService(),
+          serviceId: "test-model",
+          logger: makeTestLogger("LlmClient")
+        });
+
+        await client.chat({
+          messages: [
+            { role: "user", content: "go" },
+            {
+              role: "assistant",
+              content: "ok",
+              tool_calls: [{ id: "dup_result", type: "function", function: { name: "read", arguments: "{}" } }]
+            },
+            { role: "tool", tool_call_id: "dup_result", name: "read", content: "first" },
+            { role: "tool", tool_call_id: "dup_result", name: "read", content: "second" }
+          ]
+        });
+
+        const msgs = mockGenerateText.mock.calls[0].arguments[0].messages;
+        const toolMsgs = msgs.filter((msg) => msg.role === "tool");
+        assert.strictEqual(toolMsgs.length, 1, "duplicate tool_result should be removed before generateText");
+        assert.strictEqual(toolMsgs[0].content[0].output.value, "first", "keep the first occurrence");
+      });
+
       it("无 tool_call_id 的 tool 消息应转换为 tool-result 格式", async () => {
         const client = new LlmClient({
           configService: createConfigService(),

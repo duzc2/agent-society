@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
-import { LayoutGrid, Briefcase, Settings, ChevronLeft, ChevronRight, Home, Search, X, Loader2, Layers, Puzzle, Sparkles, Pencil, Check, ChevronDown, Archive } from 'lucide-vue-next';
+import { LayoutGrid, Briefcase, Settings, ChevronLeft, ChevronRight, Home, Search, X, Loader2, Layers, Puzzle, Sparkles, FolderOpen, Pencil, Check, ChevronDown, Archive } from 'lucide-vue-next';
 import { VueDraggable } from 'vue-draggable-plus';
 import { useAppStore } from '../../stores/app';
 import { useOrgStore } from '../../stores/org';
@@ -17,6 +17,7 @@ import { openSettingsWindow } from '../settings/settingsWindow';
 import { openSkillManagerWindow } from '../skills/skillManagerWindow';
 import OrgTemplateManager from '../template/OrgTemplateManager.vue';
 import ModuleManagerDialog from '../modules/ModuleManagerDialog.vue';
+import WorkspaceFileAccessPanel from '../workspaceFileAccess/WorkspaceFileAccessPanel.vue';
 import { createDragEndHandler } from '../../utils/dialogBounds';
 import { ZIndex } from '@primeuix/utils';
 import { useAgentStore } from '../../stores/agent';
@@ -566,6 +567,34 @@ const openSkillManager = () => {
   return openSkillManagerWindow(dialog);
 };
 
+const openWorkspaceFileAccess = () => {
+  return createSingletonWindow('workspaceFileAccess', () => {
+    return dialog.open(WorkspaceFileAccessPanel, {
+      props: {
+        header: '文件权限设置',
+        style: {
+          width: '1000px',
+          height: '80vh'
+        },
+        modal: false,
+        dismissableMask: false,
+        closeOnEscape: false,
+        keepInViewport: false,
+        maximizable: true,
+        onDragend: createDragEndHandler(),
+        pt: {
+          content: {
+            class: ['p-0', 'overflow-hidden']
+          }
+        }
+      } as any,
+      onClose: () => {
+        delete globalWindows['workspaceFileAccess'];
+      }
+    });
+  });
+};
+
 const openModuleManager = () => {
   return createSingletonWindow('module', () => {
     return dialog.open(ModuleManagerDialog, {
@@ -684,6 +713,7 @@ const tools = [
   { id: 'templates', icon: Layers, label: '组织模板', action: openTemplateManager },
   { id: 'modules', icon: Puzzle, label: '模块管理', action: openModuleManager },
   { id: 'skills', icon: Sparkles, label: '技能管理', action: openSkillManager },
+  { id: 'workspaceFileAccess', icon: FolderOpen, label: '文件权限设置', action: openWorkspaceFileAccess },
   { id: 'settings', icon: Settings, label: '系统设置', action: openSettings },
 ];
 

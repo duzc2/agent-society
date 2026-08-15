@@ -39,6 +39,10 @@ import "./skills.js";
 import "./org-templates.js";
 // workspace routes now auto-registered via workspace_manager.js registry.declare()
 import "../../../services/workspace/workspace_manager.js";
+// 副作用导入：触发工作区文件访问门面服务的 registry.declare() 注册模块声明
+import "../../../services/workspace/file_access/workspace_file_access_service.js";
+// 工作区文件访问管理 HTTP 路由
+import "../../../services/workspace/file_access/routes.js";
 // save-eval-script routes now auto-registered from modules/ui_page/
 import "../../../../../modules/ui_page/save-eval-script.js";
 
@@ -298,6 +302,13 @@ export class HTTPServer {
       knowledgeTreeSystem: this.society?.runtime?.knowledgeTree ?? null
     });
     await registry.ensureReady();
+
+    // 工具执行器延迟到首次调用时才读取 runtime.workspaceFileAccessService，
+    // 因此这里只需在服务激活后挂载，供 FileTools / document 模块统一使用。
+    const runtime = this.society?.runtime;
+    if (runtime) {
+      runtime.workspaceFileAccessService = registry.getService("workspaceFileAccessService");
+    }
   }
 
 

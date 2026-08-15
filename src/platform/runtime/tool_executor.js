@@ -150,6 +150,28 @@ export class ToolExecutor {
           return await this._executeFileSearch(ctx, args);
         case "file_line_count":
           return await this._executeFileLineCount(ctx, args);
+        case "file_read":
+          return await this._executeFileRead(ctx, args);
+        case "file_info":
+          return await this._executeFileInfo(ctx, args);
+        case "file_stats":
+          return await this._executeFileStats(ctx, args);
+        case "file_json_tree":
+          return await this._executeFileJsonTree(ctx, args);
+        case "file_json_keys":
+          return await this._executeFileJsonKeys(ctx, args);
+        case "file_jsonl_filter":
+          return await this._executeFileJsonlFilter(ctx, args);
+        case "file_create_directory":
+          return await this._executeFileCreateDirectory(ctx, args);
+        case "file_copy_to_workspace":
+          return await this._executeFileCopyToWorkspace(ctx, args);
+        case "file_copy_from_workspace":
+          return await this._executeFileCopyFromWorkspace(ctx, args);
+        case "file_check_permission":
+          return await this._executeFileCheckPermission(ctx, args);
+        case "file_list_authorized_folders":
+          return await this._executeFileListAuthorizedFolders(ctx, args);
         case "edit_file":
           return await this._executeEditFile(ctx, args);
         case "replace_file":
@@ -370,6 +392,50 @@ export class ToolExecutor {
 
   async _executeFileLineCount(ctx, args) {
     return this.fileTools._executeFileLineCount(ctx, args);
+  }
+
+  async _executeFileRead(ctx, args) {
+    return this.fileTools._executeFileRead(ctx, args);
+  }
+
+  async _executeFileInfo(ctx, args) {
+    return this.fileTools._executeFileInfo(ctx, args);
+  }
+
+  async _executeFileStats(ctx, args) {
+    return this.fileTools._executeFileStats(ctx, args);
+  }
+
+  async _executeFileJsonTree(ctx, args) {
+    return this.fileTools._executeFileJsonTree(ctx, args);
+  }
+
+  async _executeFileJsonKeys(ctx, args) {
+    return this.fileTools._executeFileJsonKeys(ctx, args);
+  }
+
+  async _executeFileJsonlFilter(ctx, args) {
+    return this.fileTools._executeFileJsonlFilter(ctx, args);
+  }
+
+  async _executeFileCreateDirectory(ctx, args) {
+    return this.fileTools._executeFileCreateDirectory(ctx, args);
+  }
+
+  async _executeFileCopyToWorkspace(ctx, args) {
+    return this.fileTools._executeFileCopyToWorkspace(ctx, args);
+  }
+
+  async _executeFileCopyFromWorkspace(ctx, args) {
+    return this.fileTools._executeFileCopyFromWorkspace(ctx, args);
+  }
+
+  async _executeFileCheckPermission(ctx, args) {
+    return this.fileTools._executeFileCheckPermission(ctx, args);
+  }
+
+  async _executeFileListAuthorizedFolders(ctx, args) {
+    return this.fileTools._executeFileListAuthorizedFolders(ctx, args);
   }
 
   async _executeEditFile(ctx, args) {

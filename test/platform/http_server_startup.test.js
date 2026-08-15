@@ -33,6 +33,7 @@ const mockConfigService = {
   async saveLlm() {},
   async getModules() { return { modules: {}, source: "default", mergedModules: {}, defaultModules: {} }; },
   async saveModules() {},
+  registerModuleConfig() {},
   async getModuleConfig() { return {}; },
   async saveModuleConfig() { return {}; },
   async getAppSettings() { return { settings: {} }; },
@@ -174,6 +175,7 @@ before(async () => {
     skillsService: mockSkillsService,
     customSkillService: mockCustomSkillService,
     gitSkillService: mockGitSkillService,
+    findWorkspaceIdForAgent: () => null,
   });
 
   // Step 2: 创建 server 并调用 setSociety

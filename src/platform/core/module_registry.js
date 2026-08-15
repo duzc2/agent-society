@@ -48,6 +48,16 @@ export class ModuleRegistry {
   }
 
   /**
+   * 只读获取已注册服务。
+   * 供 Bootstrap/HTTPServer 在 ensureReady 之后把服务挂载到 runtime。
+   * @param {string} name
+   * @returns {any|undefined}
+   */
+  getService(name) {
+    return this._services.get(name);
+  }
+
+  /**
    * 手动注入服务（用于非模块化的组件，如 Bootstrap、HTTPServer）。
    * @param {Record<string, any>} serviceMap
    * @returns {Promise<void>} 所有连锁激活完成后 resolve

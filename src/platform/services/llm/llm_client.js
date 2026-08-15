@@ -477,6 +477,34 @@ export class LlmClient {
           }
         }
 
+        // 同一次 tool_use 只允许一个 tool_result。历史持久化或并发边界可能产生
+        // 相同 tool_call_id 的多条 tool 消息；Anthropic 等严格 provider 会拒绝
+        // 这种请求，因此必须在发送前移除重复结果，只保留第一次出现的结果。
+        {
+          const seenToolResultIds = new Set();
+          const duplicateToolResultIds = [];
+          const beforeDedupeCount = cleanedMessages.length;
+          cleanedMessages = cleanedMessages.filter((msg) => {
+            if (msg.role !== "tool" || !msg.tool_call_id) {
+              return true;
+            }
+            if (seenToolResultIds.has(msg.tool_call_id)) {
+              duplicateToolResultIds.push(msg.tool_call_id);
+              return false;
+            }
+            seenToolResultIds.add(msg.tool_call_id);
+            return true;
+          });
+          const duplicateToolResultCount = beforeDedupeCount - cleanedMessages.length;
+          if (duplicateToolResultCount > 0) {
+            void this.log.warn("[LLM] 移除了重复的 tool_result", {
+              meta,
+              duplicateToolResultCount,
+              duplicateToolResultIds: duplicateToolResultIds.slice(0, 20)
+            });
+          }
+        }
+
         // 确保消息 content 符合 ai-sdk zod schema 要求：
         // - string → 透传
         // - null/undefined → ""

@@ -1,13 +1,16 @@
 /**
  * 文档读取器
  * 协调文档类型检测、解析和结果输出。
+ *
+ * 路径解析统一走 workspace_file_access 的 PathResolver：
+ * - 工作区路径行为保持不变。
+ * - 外部授权路径只读访问，且必须通过 read 权限检查。
  */
 
 import { stat } from "node:fs/promises";
 import { detectType, getSupportedExtensions } from "./parser/type_detector.js";
 import { parsePdf, getPdfMetadata } from "./parser/pdf_parser.js";
 import { parseOffice, getOfficeMetadata } from "./parser/office_parser.js";
-import { getWorkspaceManager } from "../../src/platform/services/workspace/workspace_manager.js";
 
 /** 文件大小上限：50MB */
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -16,17 +19,19 @@ const MAX_CONTENT_CHARS = 200000;
 
 /**
  * 文档读取器
- * 负责将相对路径解析为绝对路径、检测类型、调用对应解析器。
+ * 负责将原始路径解析为安全绝对路径、检测类型、调用对应解析器。
  */
 export class DocumentReader {
   /**
    * @param {object} options
    * @param {any} options.log - 日志对象
-   * @param {(agentId: string) => string|null} options.findWorkspaceIdForAgent - 查找工作区ID
+   * @param {import("../../src/platform/services/workspace/file_access/path_resolver.js").PathResolver} options.pathResolver
+   * @param {import("../../src/platform/services/workspace/file_access/external_permission_manager.js").ExternalPermissionManager} options.permissionManager
    */
-  constructor({ log, findWorkspaceIdForAgent }) {
+  constructor({ log, pathResolver, permissionManager }) {
     this._log = log;
-    this._findWorkspaceIdForAgent = findWorkspaceIdForAgent;
+    this._pathResolver = pathResolver;
+    this._permissionManager = permissionManager;
   }
 
   /**
@@ -36,12 +41,10 @@ export class DocumentReader {
    * @returns {Promise<object>}
    */
   async read(ctx, args) {
-    const workspace = await this._resolveWorkspace(ctx);
-    if (workspace.error) return workspace;
+    const resolved = await this._resolveDocumentPath(ctx, args.path);
+    if (resolved.error) return resolved;
 
-    const absPath = this._resolvePath(workspace, args.path);
-    if (absPath.error) return absPath;
-
+    const absPath = resolved.absolutePath;
     const typeInfo = detectType(args.path);
     if (!typeInfo) {
       return {
@@ -85,12 +88,10 @@ export class DocumentReader {
    * @returns {Promise<object>}
    */
   async info(ctx, args) {
-    const workspace = await this._resolveWorkspace(ctx);
-    if (workspace.error) return workspace;
+    const resolved = await this._resolveDocumentPath(ctx, args.path);
+    if (resolved.error) return resolved;
 
-    const absPath = this._resolvePath(workspace, args.path);
-    if (absPath.error) return absPath;
-
+    const absPath = resolved.absolutePath;
     const typeInfo = detectType(args.path);
     if (!typeInfo) {
       return {
@@ -180,39 +181,53 @@ export class DocumentReader {
   // ---- 内部方法 ----
 
   /**
-   * 根据 ctx 解析 workspace 对象。
+   * 将原始路径解析为可安全读取的绝对路径。
+   * 工作区路径由 PathResolver 复用 workspace.resolveAbsolutePath；
+   * 外部路径额外执行 read 权限检查。
+   *
    * @param {any} ctx
-   * @returns {import("../../src/platform/services/workspace/workspace.js").Workspace | { error: string, message: string }}
+   * @param {string} rawPath
+   * @returns {Promise<{ absolutePath: string } | { error: string, message: string }>}
    */
-  async _resolveWorkspace(ctx) {
-    const agentId = ctx?.agent?.id;
-    if (!agentId) {
-      return { error: "no_workspace", message: "无法获取智能体 ID" };
-    }
-    const wsId = this._findWorkspaceIdForAgent(agentId);
-    if (!wsId) {
-      return { error: "no_workspace", message: "该智能体没有关联的工作区" };
-    }
-    const wm = getWorkspaceManager();
-    if (!wm) {
-      return { error: "no_workspace", message: "工作区管理器未初始化" };
-    }
-    return await wm.getWorkspace(wsId);
-  }
-
-  /**
-   * 解析安全绝对路径。
-   * @param {object} workspace - Workspace 实例
-   * @param {string} relativePath - 工作区相对路径
-   * @returns {string | { error: string, message: string }}
-   */
-  _resolvePath(workspace, relativePath) {
+  async _resolveDocumentPath(ctx, rawPath) {
     try {
-      return workspace.resolveAbsolutePath(relativePath);
+      const resolved = await this._pathResolver.resolvePath(ctx, rawPath, {
+        operation: "read",
+      });
+
+      if (resolved.scope === "workspace") {
+        return { absolutePath: resolved.absolutePath };
+      }
+
+      const permission = await this._permissionManager.checkReadPermission(
+        resolved.absolutePath,
+        resolved.orgId
+      );
+      if (!permission.allowed) {
+        return {
+          error: "access_denied",
+          message: `没有权限读取外部文档: ${rawPath}`,
+        };
+      }
+
+      return { absolutePath: resolved.absolutePath };
     } catch (err) {
+      this._log.error("[DocumentReader] 解析文档路径失败", {
+        path: rawPath,
+        message: err.message,
+        stack: err.stack,
+      });
+
+      if (err.message === "forbidden_path_segment") {
+        return {
+          error: "forbidden_path_segment",
+          message: "路径包含受保护的 .io / .versions 目录段",
+        };
+      }
+
       return {
-        error: "file_not_found",
-        message: `路径无效或越权: ${relativePath}`,
+        error: "path_resolve_failed",
+        message: `路径解析失败: ${err.message}`,
       };
     }
   }

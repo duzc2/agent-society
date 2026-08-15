@@ -19,13 +19,14 @@ let _log = null;
 
 registry.declare({
   name: "document-module",
-  requires: ["logRoot", "findWorkspaceIdForAgent"],
+  requires: ["logRoot", "workspaceFileAccessService"],
   provides: [],
   async init(deps) {
     _log = deps.logRoot.forModule("document");
     _reader = new DocumentReader({
       log: _log,
-      findWorkspaceIdForAgent: deps.findWorkspaceIdForAgent,
+      pathResolver: deps.workspaceFileAccessService.pathResolver,
+      permissionManager: deps.workspaceFileAccessService.externalPermissionManager,
     });
     _log.info("[Document] 文档模块初始化完成");
   },
@@ -44,11 +45,11 @@ export default {
         type: "function",
         function: {
           name: "document_read",
-          description: "读取工作区内 Office 或 PDF 文件的文本内容。支持 .docx .xlsx .pptx .pdf。自动根据扩展名识别类型。超过 200000 字符自动截断。",
+          description: "读取 Office 或 PDF 文件的文本内容。路径支持工作区相对路径，或已授权且 read=true 的外部绝对路径（外部只读）。支持 .docx .xlsx .pptx .pdf。超过 200000 字符自动截断。",
           parameters: {
             type: "object",
             properties: {
-              path:   { type: "string", description: "工作区相对路径，如 \"report.pdf\"、\"data/销售.xlsx\"" },
+              path:   { type: "string", description: "工作区相对路径，或已授权且 read=true 的外部绝对路径" },
               format: { type: "string", enum: ["text", "markdown"], description: "text 纯文本，markdown 保留标题和表格结构。默认 text" },
             },
             required: ["path"],
@@ -59,10 +60,10 @@ export default {
         type: "function",
         function: {
           name: "document_info",
-          description: "获取文档元数据：类型、页数/工作表数/幻灯片数。不提取全文。",
+          description: "获取文档元数据：类型、页数/工作表数/幻灯片数。路径支持工作区相对路径，或已授权且 read=true 的外部绝对路径（外部只读）。",
           parameters: {
             type: "object",
-            properties: { path: { type: "string", description: "工作区相对路径" } },
+            properties: { path: { type: "string", description: "工作区相对路径，或已授权且 read=true 的外部绝对路径" } },
             required: ["path"],
           },
         },
@@ -71,11 +72,11 @@ export default {
         type: "function",
         function: {
           name: "document_search",
-          description: "在文档中搜索关键字，返回匹配位置及上下文。",
+          description: "在文档中搜索关键字，返回匹配位置及上下文。路径支持工作区相对路径，或已授权且 read=true 的外部绝对路径（外部只读）。",
           parameters: {
             type: "object",
             properties: {
-              path:          { type: "string", description: "工作区相对路径" },
+              path:          { type: "string", description: "工作区相对路径，或已授权且 read=true 的外部绝对路径" },
               keyword:       { type: "string", description: "搜索关键字" },
               caseSensitive: { type: "boolean", description: "默认 false (不区分大小写)" },
               contextLines:  { type: "number", description: "匹配前后上下文行数。默认 2，最大 10" },

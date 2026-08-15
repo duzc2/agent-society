@@ -267,11 +267,11 @@ export class ToolSchema {
         type: "function",
         function: {
           name: "file_read_lines",
-          description: "按行号范围读取文件内容，避免全文撑爆上下文。返回指定行的内容数组（不含换行符）。",
+          description: "按行号范围读取文件内容，避免全文撑爆上下文。返回指定行的内容数组（不含换行符）。路径支持工作区相对路径或已授权的外部绝对路径。",
           parameters: {
             type: "object",
             properties: {
-              path: { type: "string", description: "文件的相对路径" },
+              path: { type: "string", description: "工作区相对路径，或已授权的外部绝对路径" },
               start_line: { type: "number", description: "起始行号（1-based，含），默认为 1" },
               end_line: { type: "number", description: "结束行号（1-based，含），超过自动截断到末尾。默认为 500" }
             },
@@ -283,14 +283,15 @@ export class ToolSchema {
         type: "function",
         function: {
           name: "file_search",
-          description: "在单个文件内搜索字符串或正则表达式，返回匹配位置及该行的完整内容，适合精确定位后构造 edit_file 的 old_string。",
+          description: "在单个文件内搜索字符串或正则表达式，返回匹配位置及该行的完整内容，适合精确定位后构造 edit_file 的 old_string。路径支持工作区相对路径或已授权的外部绝对路径。",
           parameters: {
             type: "object",
             properties: {
-              path: { type: "string", description: "文件的相对路径" },
+              path: { type: "string", description: "工作区相对路径，或已授权的外部绝对路径" },
               pattern: { type: "string", description: "搜索文本或正则表达式" },
               is_regex: { type: "boolean", description: "是否按正则匹配，默认为 false" },
-              max_results: { type: "number", description: "最大返回结果数，默认 100" }
+              max_results: { type: "number", description: "最大返回结果数，默认 100" },
+              context_lines: { type: "number", description: "每个匹配项返回的前后上下文行数，默认为 0" }
             },
             required: ["path", "pattern"]
           }
@@ -300,11 +301,11 @@ export class ToolSchema {
         type: "function",
         function: {
           name: "file_line_count",
-          description: "获取文件的总行数，用于读取前了解文件规模。",
+          description: "获取文件的总行数，用于读取前了解文件规模。路径支持工作区相对路径或已授权的外部绝对路径。",
           parameters: {
             type: "object",
             properties: {
-              path: { type: "string", description: "文件的相对路径" }
+              path: { type: "string", description: "工作区相对路径，或已授权的外部绝对路径" }
             },
             required: ["path"]
           }
@@ -313,12 +314,194 @@ export class ToolSchema {
       {
         type: "function",
         function: {
-          name: "edit_file",
-          description: "在文件内精确替换指定文本。old_string 必须与文件中原始文本逐字符精确匹配（含空白和缩进）。默认要求 old_string 在文件中唯一，除非设置 replace_all。\n\n【重要提示】\n- 必须先通过 file_read_lines 或 file_search 读取文件，确保 old_string 精确定位\n- 连续编辑时，每次 edit_file 后不需要重新读取文件，但必须确保 old_string 基于最新文件内容\n- 使用 file_search 找到目标代码后，用其返回的完整行内容作为 old_string",
+          name: "file_read",
+          description: "按字节范围读取文件内容，支持工作区相对路径或已授权的外部绝对路径。适合需要精确 offset/length 的大文件或二进制文件读取。",
           parameters: {
             type: "object",
             properties: {
-              path: { type: "string", description: "文件的相对路径" },
+              path: { type: "string", description: "工作区相对路径，或已授权的外部绝对路径" },
+              offset: { type: "number", description: "起始字节偏移，默认为 0" },
+              length: { type: "number", description: "读取字节数，默认 500，最大不超过 256KB" }
+            },
+            required: ["path"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "file_info",
+          description: "获取文件大小、行数和类型估算信息，不读取文件内容。路径支持工作区相对路径或已授权的外部绝对路径。",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "工作区相对路径，或已授权的外部绝对路径" }
+            },
+            required: ["path"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "file_stats",
+          description: "按规则对文本文件进行流式统计，返回每个规则匹配的行数和占比。路径支持工作区相对路径或已授权的外部绝对路径。",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "工作区相对路径，或已授权的外部绝对路径" },
+              rules: {
+                type: "array",
+                description: "统计规则数组，每项包含 name、pattern，可选 is_regex",
+                items: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string", description: "规则名称" },
+                    pattern: { type: "string", description: "匹配文本或正则表达式" },
+                    is_regex: { type: "boolean", description: "是否按正则匹配，默认 false" }
+                  },
+                  required: ["name", "pattern"]
+                }
+              },
+              line_range: {
+                type: "object",
+                description: "可选行号范围，如 { start: 10, end: 20 }",
+                properties: {
+                  start: { type: "number" },
+                  end: { type: "number" }
+                }
+              }
+            },
+            required: ["path", "rules"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "file_json_tree",
+          description: "流式解析大型 JSON 文件，按路径表达式返回指定子树。路径支持工作区相对路径或已授权的外部绝对路径。",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "工作区相对路径，或已授权的外部绝对路径" },
+              path_expr: { type: "string", description: "点分路径表达式，如 users.0.name；空字符串或 . 表示根节点" },
+              max_depth: { type: "number", description: "子树展开最大深度，默认 2" }
+            },
+            required: ["path"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "file_json_keys",
+          description: "流式读取 JSON 文件，返回指定路径下的对象键名或数组索引范围。路径支持工作区相对路径或已授权的外部绝对路径。",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "工作区相对路径，或已授权的外部绝对路径" },
+              path_expr: { type: "string", description: "点分路径表达式，空字符串或 . 表示根节点" }
+            },
+            required: ["path"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "file_jsonl_filter",
+          description: "流式扫描 JSONL 文件，按字段值过滤匹配记录。路径支持工作区相对路径或已授权的外部绝对路径。",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "工作区相对路径，或已授权的外部绝对路径" },
+              field: { type: "string", description: "要匹配的字段路径，如 user.name" },
+              pattern: { type: "string", description: "匹配文本或正则表达式" },
+              is_regex: { type: "boolean", description: "是否按正则匹配，默认 false" },
+              max_results: { type: "number", description: "最大返回记录数" },
+              max_chars_per_record: { type: "number", description: "每条记录最大字符数" }
+            },
+            required: ["path", "field", "pattern"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "file_create_directory",
+          description: "创建目录。路径支持工作区相对路径或已授权的外部绝对路径；外部路径需要目标文件夹 write=true。",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "工作区相对路径，或已授权且 write=true 的外部绝对路径" },
+              recursive: { type: "boolean", description: "是否递归创建父目录，默认 true" }
+            },
+            required: ["path"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "file_copy_to_workspace",
+          description: "将已授权的外部文件复制到当前智能体工作区。源路径必须是已授权且 read=true 的外部绝对路径，目标路径必须是工作区相对路径。",
+          parameters: {
+            type: "object",
+            properties: {
+              sourcePath: { type: "string", description: "已授权且 read=true 的外部源文件绝对路径" },
+              destPath: { type: "string", description: "工作区目标相对路径，如 docs/example.txt" }
+            },
+            required: ["sourcePath", "destPath"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "file_copy_from_workspace",
+          description: "将当前智能体工作区文件复制到已授权的外部目录。目标路径必须是已授权且 write=true 的外部绝对路径。",
+          parameters: {
+            type: "object",
+            properties: {
+              sourcePath: { type: "string", description: "工作区源文件相对路径" },
+              destPath: { type: "string", description: "已授权且 write=true 的外部目标文件绝对路径" }
+            },
+            required: ["sourcePath", "destPath"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "file_check_permission",
+          description: "检查指定路径是否可访问，以及当前智能体对路径的读取和写入权限。路径支持工作区相对路径或已授权的外部绝对路径。",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "工作区相对路径，或已授权的外部绝对路径" }
+            },
+            required: ["path"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "file_list_authorized_folders",
+          description: "列出当前智能体可访问的外部授权文件夹及其读取/写入权限。",
+          parameters: { type: "object", properties: {} }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "edit_file",
+          description: "在文件内精确替换指定文本。old_string 必须与文件中原始文本逐字符精确匹配（含空白和缩进）。默认要求 old_string 在文件中唯一，除非设置 replace_all。路径支持工作区相对路径或已授权的外部绝对路径；外部路径需要目标文件夹 write=true。\n\n【重要提示】\n- 必须先通过 file_read_lines 或 file_search 读取文件，确保 old_string 精确定位\n- 连续编辑时，每次 edit_file 后不需要重新读取文件，但必须确保 old_string 基于最新文件内容\n- 使用 file_search 找到目标代码后，用其返回的完整行内容作为 old_string",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "工作区相对路径，或已授权且 write=true 的外部绝对路径" },
               old_string: { type: "string", description: "要替换的原始文本，必须与文件中内容逐字符完全相同（含空白、缩进、换行）" },
               new_string: { type: "string", description: "替换后的新文本" },
               replace_all: { type: "boolean", description: "是否替换所有匹配项，默认 false（仅替换第一处）" }
@@ -331,11 +514,11 @@ export class ToolSchema {
         type: "function",
         function: {
           name: "replace_file",
-          description: "在工作空间内创建或修改文件。",
+          description: "在工作空间内创建或修改文件。路径支持工作区相对路径或已授权的外部绝对路径；外部路径需要目标文件夹 write=true。",
           parameters: {
             type: "object",
             properties: {
-              path: { type: "string", description: "文件的相对路径" },
+              path: { type: "string", description: "工作区相对路径，或已授权且 write=true 的外部绝对路径" },
               content: { type: "string", description: "文件内容。如果是二进制数据，请提供 Base64 编码字符串。" },
               mimeType: {
                 type: "string",
@@ -350,11 +533,11 @@ export class ToolSchema {
         type: "function",
         function: {
           name: "append_file",
-          description: "向文件末尾追加内容。如果文件不存在，则创建新文件。",
+          description: "向文件末尾追加内容。如果文件不存在，则创建新文件。路径支持工作区相对路径或已授权的外部绝对路径；外部路径需要目标文件夹 write=true。",
           parameters: {
             type: "object",
             properties: {
-              path: { type: "string", description: "文件的相对路径" },
+              path: { type: "string", description: "工作区相对路径，或已授权且 write=true 的外部绝对路径" },
               content: { type: "string", description: "要追加的内容。如果是二进制数据，请提供 Base64 编码字符串。" },
               mimeType: {
                 type: "string",
@@ -369,10 +552,10 @@ export class ToolSchema {
         type: "function",
         function: {
           name: "list_files",
-          description: "列出工作空间内指定目录的文件和子目录信息。",
+          description: "列出工作空间内指定目录的文件和子目录信息。路径支持工作区相对路径或已授权的外部绝对路径。",
           parameters: {
             type: "object",
-            properties: { path: { type: "string", description: "目录的相对路径，默认为根目录 '.'" } }
+            properties: { path: { type: "string", description: "工作区相对路径，或已授权的外部绝对路径；默认为工作区根目录 '.'" } }
           }
         }
       },
@@ -380,11 +563,11 @@ export class ToolSchema {
         type: "function",
         function: {
           name: "delete_file",
-          description: "删除工作空间内的指定文件。",
+          description: "删除工作空间内的指定文件。路径支持工作区相对路径或已授权的外部绝对路径；外部路径需要目标文件夹 write=true。",
           parameters: {
             type: "object",
             properties: {
-              path: { type: "string", description: "要删除的文件相对路径" }
+              path: { type: "string", description: "工作区相对路径，或已授权且 write=true 的外部绝对路径" }
             },
             required: ["path"]
           }
@@ -394,12 +577,12 @@ export class ToolSchema {
         type: "function",
         function: {
           name: "move_file",
-          description: "在工作空间内移动或重命名文件。保持元数据与历史记录。",
+          description: "在工作空间内移动或重命名文件。路径支持工作区相对路径或已授权的外部绝对路径；仅允许同 scope 移动，外部路径需要目标文件夹 write=true。",
           parameters: {
             type: "object",
             properties: {
-              fromPath: { type: "string", description: "源文件相对路径" },
-              toPath: { type: "string", description: "目标文件相对路径（可包含子目录）" },
+              fromPath: { type: "string", description: "源文件路径：工作区相对路径，或已授权的外部绝对路径" },
+              toPath: { type: "string", description: "目标文件路径：与源路径保持同 scope，外部目标需要 write=true" },
               overwrite: { type: "boolean", description: "若目标存在是否覆盖，默认 false" }
             },
             required: ["fromPath", "toPath"]
@@ -419,13 +602,13 @@ export class ToolSchema {
         type: "function",
         function: {
           name: "search_text",
-          description: "在工作空间的指定子文件夹内搜索文本字符串，返回匹配的文件名、行号和列号列表。",
+          description: "在工作空间的指定子文件夹内搜索文本字符串，返回匹配的文件名、行号和列号列表。路径支持工作区相对路径或已授权的外部绝对路径；外部路径为只读递归搜索，需 read=true。",
           parameters: {
             type: "object",
             properties: {
               path: {
                 type: "string",
-                description: "子目录的相对路径"
+                description: "工作区相对路径，或已授权且 read=true 的外部绝对路径"
               },
               text: {
                 type: "string",

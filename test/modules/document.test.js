@@ -6,13 +6,13 @@
  * Mock 策略：
  *   - 解析器模块 (pdf_parser.js / office_parser.js) → mock.module(fileURL, namedExports)
  *     直接 mock 解析器层，绕过 unpdf/officeparser 等 npm 包的 CJS/ESM 兼容问题
- *   - WorkspaceManager → _setTestWorkspaceManager / _resetWorkspaceManager
+ *   - pathResolver / permissionManager → 用 mock.fn 直接提供，覆盖 workspace/external 分支
  *   - 文件系统 → 真实临时文件（不 mock）
  */
 
 import { describe, it, mock, before, beforeEach, after, afterEach } from "node:test";
 import assert from "node:assert";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, open } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -35,12 +35,38 @@ import {
   getSupportedExtensions,
   getTypeLabel,
 } from "../../modules/document/parser/type_detector.js";
-import {
-  _setTestWorkspaceManager,
-  _resetWorkspaceManager,
-} from "../../src/platform/services/workspace/workspace_manager.js";
 import { makeTestLogger, testLoggerRoot } from "../helpers/test_logger.js";
 import { registry } from "../../src/platform/core/module_registry.js";
+
+// =============================================================================
+// 辅助函数：mock DocumentReader 依赖
+// =============================================================================
+
+/**
+ * 创建一个 mock PathResolver。
+ * 默认返回 workspace scope，将相对路径拼到 tempDir；
+ * 需要 external 分支时可在测试中覆盖 resolvePath.mockImplementation。
+ */
+function makeMockPathResolver(tempDir, { scope = "workspace", orgId = "org-1" } = {}) {
+  return {
+    resolvePath: mock.fn(async (_ctx, rawPath) => ({
+      scope,
+      absolutePath: scope === "workspace" ? join(tempDir, rawPath) : rawPath,
+      relativePath: scope === "workspace" ? rawPath : null,
+      orgId,
+    })),
+  };
+}
+
+/**
+ * 创建一个 mock ExternalPermissionManager。
+ * 默认允许读取；需要拒绝分支时传入 allowed=false。
+ */
+function makeMockPermissionManager(allowed = true) {
+  return {
+    checkReadPermission: mock.fn(async (_absPath, _orgId) => ({ allowed })),
+  };
+}
 
 // =============================================================================
 // 辅助函数：生成最小有效文件
@@ -396,6 +422,10 @@ describe("Document Module", () => {
   let docModule;
   /** @type {typeof import("../../modules/document/document_reader.js").DocumentReader} */
   let DocumentReaderClass;
+
+  /** 模块级共享 pathResolver/permissionManager，避免 integration after 清理后引用已删除临时目录 */
+  let sharedPathResolver;
+  let sharedPermissionManager;
 
   before(async () => {
     // 可变实现：允许测试按需覆盖行为
@@ -785,32 +815,25 @@ describe("Document Module", () => {
   describe("DocumentReader 单元测试", () => {
     // -- 共享 setup --
     let tempDir;
-    let findWorkspaceIdForAgent;
-    let resolveAbsolutePath;
-    let mockWorkspace;
+    let pathResolver;
+    let permissionManager;
 
     /** @type {InstanceType<typeof DocumentReaderClass>} */
     let reader;
 
     beforeEach(async () => {
       tempDir = await mkdtemp(join(tmpdir(), "doc-test-"));
-      findWorkspaceIdForAgent = mock.fn((id) => `ws-${id}`);
-      resolveAbsolutePath = mock.fn((rel) => join(tempDir, rel));
-
-      mockWorkspace = { resolveAbsolutePath };
-
-      _setTestWorkspaceManager({
-        getWorkspace: mock.fn(async () => mockWorkspace),
-      });
+      pathResolver = makeMockPathResolver(tempDir);
+      permissionManager = makeMockPermissionManager(true);
 
       reader = new DocumentReaderClass({
         log: makeTestLogger("DocReader"),
-        findWorkspaceIdForAgent,
+        pathResolver,
+        permissionManager,
       });
     });
 
     afterEach(async () => {
-      _resetWorkspaceManager();
       await rm(tempDir, { recursive: true, force: true });
     });
 
@@ -819,50 +842,45 @@ describe("Document Module", () => {
     // ---------------------------------------------------------------------
 
     describe("read() — 错误路径", () => {
-      it("ctx 无 agent.id → no_workspace", async () => {
+      it("pathResolver 抛 agent_id_required → path_resolve_failed", async () => {
+        pathResolver.resolvePath.mock.mockImplementation(() => {
+          throw new Error("agent_id_required");
+        });
         const result = await reader.read({}, { path: "test.pdf" });
-        assert.strictEqual(result.error, "no_workspace");
+        assert.strictEqual(result.error, "path_resolve_failed");
+        assert.ok(result.message.includes("agent_id_required"));
       });
 
-      it("ctx.agent 为空对象 → no_workspace", async () => {
-        const result = await reader.read({ agent: {} }, { path: "test.pdf" });
-        assert.strictEqual(result.error, "no_workspace");
-      });
-
-      it("findWorkspaceIdForAgent 返回 null → no_workspace", async () => {
-        reader._findWorkspaceIdForAgent = () => null;
-        const result = await reader.read(
-          { agent: { id: "agent-1" } },
-          { path: "test.pdf" },
-        );
-        assert.strictEqual(result.error, "no_workspace");
-      });
-
-      it("WorkspaceManager 未初始化 → no_workspace", async () => {
-        _resetWorkspaceManager();
-        try {
-          const result = await reader.read(
-            { agent: { id: "agent-1" } },
-            { path: "test.pdf" },
-          );
-          assert.strictEqual(result.error, "no_workspace");
-        } finally {
-          // 恢复供后续测试使用
-          _setTestWorkspaceManager({
-            getWorkspace: mock.fn(async () => mockWorkspace),
-          });
-        }
-      });
-
-      it("resolveAbsolutePath 抛异常 → file_not_found", async () => {
-        resolveAbsolutePath.mock.mockImplementation(() => {
-          throw new Error("路径越权");
+      it("pathResolver 抛 forbidden_path_segment → forbidden_path_segment", async () => {
+        pathResolver.resolvePath.mock.mockImplementation(() => {
+          throw new Error("forbidden_path_segment");
         });
         const result = await reader.read(
           { agent: { id: "agent-1" } },
-          { path: "../outside.txt" },
+          { path: "../outside.pdf" },
         );
-        assert.strictEqual(result.error, "file_not_found");
+        assert.strictEqual(result.error, "forbidden_path_segment");
+      });
+
+      it("external 路径未授权读取 → access_denied", async () => {
+        const externalPath = join(tempDir, "external.pdf");
+        await writeFile(externalPath, "dummy");
+        pathResolver.resolvePath.mock.mockImplementation(async () => ({
+          scope: "external",
+          absolutePath: externalPath,
+          relativePath: null,
+          orgId: "org-1",
+        }));
+        permissionManager.checkReadPermission.mock.mockImplementation(async () => ({
+          allowed: false,
+        }));
+
+        const result = await reader.read(
+          { agent: { id: "agent-1" } },
+          { path: externalPath },
+        );
+        assert.strictEqual(result.error, "access_denied");
+        assert.ok(result.message.includes("没有权限读取外部文档"));
       });
 
       it("不支持格式 (.txt) → unsupported_format", async () => {
@@ -882,6 +900,20 @@ describe("Document Module", () => {
           { path: "nonexistent.pdf" },
         );
         assert.strictEqual(result.error, "file_not_found");
+      });
+
+      it("文件超过 50MB 上限 → file_too_large", async () => {
+        const filePath = join(tempDir, "large.pdf");
+        const handle = await open(filePath, "w");
+        await handle.truncate(50 * 1024 * 1024 + 1);
+        await handle.close();
+
+        const result = await reader.read(
+          { agent: { id: "agent-1" } },
+          { path: "large.pdf" },
+        );
+        assert.strictEqual(result.error, "file_too_large");
+        assert.ok(result.message.includes("50.0 MB"));
       });
     });
 
@@ -904,6 +936,52 @@ describe("Document Module", () => {
           type: "pdf",
           parser: "pdf",
         });
+      });
+
+      it("PDF 内容超过 200000 字符 → 截断并标记 truncated", async () => {
+        await writeFile(join(tempDir, "long.pdf"), "dummy");
+        const longContent = "x".repeat(200100);
+        parsePdfImpl = () =>
+          Promise.resolve({
+            ok: true,
+            content: longContent,
+            metadata: { type: "pdf", parser: "pdf" },
+          });
+
+        const result = await reader.read(
+          { agent: { id: "agent-1" } },
+          { path: "long.pdf" },
+        );
+
+        assert.strictEqual(result.ok, true);
+        assert.strictEqual(result.content.length, 200000);
+        assert.strictEqual(result.metadata.truncated, true);
+        assert.strictEqual(result.metadata.totalChars, 200000);
+        assert.ok(result.metadata.note.includes("200000"));
+      });
+
+      it("external 授权只读 PDF → ok: true + content + metadata", async () => {
+        const externalPath = join(tempDir, "external.pdf");
+        await writeFile(externalPath, "dummy");
+        pathResolver.resolvePath.mock.mockImplementation(async () => ({
+          scope: "external",
+          absolutePath: externalPath,
+          relativePath: null,
+          orgId: "org-1",
+        }));
+
+        const result = await reader.read(
+          { agent: { id: "agent-1" } },
+          { path: externalPath },
+        );
+
+        assert.strictEqual(result.ok, true);
+        assert.strictEqual(result.content, "mock PDF content");
+        assert.deepStrictEqual(result.metadata, {
+          type: "pdf",
+          parser: "pdf",
+        });
+        assert.strictEqual(permissionManager.checkReadPermission.mock.callCount(), 1);
       });
 
       it("Office (docx) 读取成功 → ok: true + content + metadata", async () => {
@@ -976,9 +1054,13 @@ describe("Document Module", () => {
     // ---------------------------------------------------------------------
 
     describe("info()", () => {
-      it("无 agent → no_workspace", async () => {
+      it("pathResolver 抛 agent_id_required → path_resolve_failed", async () => {
+        pathResolver.resolvePath.mock.mockImplementation(() => {
+          throw new Error("agent_id_required");
+        });
         const result = await reader.info({}, { path: "test.pdf" });
-        assert.strictEqual(result.error, "no_workspace");
+        assert.strictEqual(result.error, "path_resolve_failed");
+        assert.ok(result.message.includes("agent_id_required"));
       });
 
       it("不支持格式 → unsupported_format", async () => {
@@ -1011,6 +1093,50 @@ describe("Document Module", () => {
         assert.strictEqual(typeof result.metadata.sizeFormatted, "string");
         assert.strictEqual(result.metadata.hasText, true);
         assert.strictEqual(result.metadata.charCount, 16);
+      });
+
+      it("external 授权只读 info → ok + metadata", async () => {
+        const externalPath = join(tempDir, "external-info.pdf");
+        await writeFile(externalPath, "A".repeat(64));
+        pathResolver.resolvePath.mock.mockImplementation(async () => ({
+          scope: "external",
+          absolutePath: externalPath,
+          relativePath: null,
+          orgId: "org-1",
+        }));
+
+        const result = await reader.info(
+          { agent: { id: "agent-1" } },
+          { path: externalPath },
+        );
+
+        assert.strictEqual(result.ok, true);
+        assert.strictEqual(result.metadata.type, "pdf");
+        assert.strictEqual(result.metadata.size, 64);
+        assert.strictEqual(permissionManager.checkReadPermission.mock.callCount(), 1);
+      });
+
+      it("external 未授权 info → access_denied", async () => {
+        const externalPath = join(tempDir, "external-denied-info.pdf");
+        await writeFile(externalPath, "A".repeat(64));
+        pathResolver.resolvePath.mock.mockImplementation(async () => ({
+          scope: "external",
+          absolutePath: externalPath,
+          relativePath: null,
+          orgId: "org-1",
+        }));
+        permissionManager.checkReadPermission.mock.mockImplementation(async () => ({
+          allowed: false,
+        }));
+
+        const result = await reader.info(
+          { agent: { id: "agent-1" } },
+          { path: externalPath },
+        );
+
+        assert.strictEqual(result.error, "access_denied");
+        assert.ok(result.message.includes("没有权限读取外部文档"));
+        assert.strictEqual(permissionManager.checkReadPermission.mock.callCount(), 1);
       });
 
       it("Office info 成功 → ok + metadata", async () => {
@@ -1167,6 +1293,62 @@ describe("Document Module", () => {
         assert.strictEqual(result.matches[0].line, 1);
         assert.strictEqual(result.matches[1].line, 3);
       });
+
+      it("external 授权只读 search → ok + matches", async () => {
+        const externalPath = join(tempDir, "external-search.pdf");
+        await writeFile(externalPath, "dummy");
+        parsePdfImpl = ({ filePath }) =>
+          Promise.resolve({
+            ok: true,
+            content: "alpha\nexternal target\nomega",
+            metadata: { type: "pdf", parser: "pdf" },
+          });
+        pathResolver.resolvePath.mock.mockImplementation(async () => ({
+          scope: "external",
+          absolutePath: externalPath,
+          relativePath: null,
+          orgId: "org-1",
+        }));
+
+        const result = await reader.search(
+          { agent: { id: "agent-1" } },
+          { path: externalPath, keyword: "target" },
+        );
+
+        assert.strictEqual(result.ok, true);
+        assert.strictEqual(result.totalMatches, 1);
+        assert.strictEqual(result.matches[0].line, 2);
+        assert.strictEqual(permissionManager.checkReadPermission.mock.callCount(), 1);
+      });
+
+      it("external 未授权 search → access_denied", async () => {
+        const externalPath = join(tempDir, "external-denied-search.pdf");
+        await writeFile(externalPath, "dummy");
+        parsePdfImpl = ({ filePath }) =>
+          Promise.resolve({
+            ok: true,
+            content: "alpha\nexternal target\nomega",
+            metadata: { type: "pdf", parser: "pdf" },
+          });
+        pathResolver.resolvePath.mock.mockImplementation(async () => ({
+          scope: "external",
+          absolutePath: externalPath,
+          relativePath: null,
+          orgId: "org-1",
+        }));
+        permissionManager.checkReadPermission.mock.mockImplementation(async () => ({
+          allowed: false,
+        }));
+
+        const result = await reader.search(
+          { agent: { id: "agent-1" } },
+          { path: externalPath, keyword: "target" },
+        );
+
+        assert.strictEqual(result.error, "access_denied");
+        assert.ok(result.message.includes("没有权限读取外部文档"));
+        assert.strictEqual(permissionManager.checkReadPermission.mock.callCount(), 1);
+      });
     });
   });
 
@@ -1220,31 +1402,31 @@ describe("Document Module", () => {
 
     describe("提供后 — 正常调用", () => {
       let tempDir;
-      let findWsForAgent;
+      let resolveWorkspacePath;
 
       before(async () => {
         tempDir = await mkdtemp(join(tmpdir(), "doc-int-"));
-
-        const mockWs = {
-          resolveAbsolutePath: mock.fn((rel) => join(tempDir, rel)),
-        };
-
-        _setTestWorkspaceManager({
-          getWorkspace: mock.fn(async () => mockWs),
+        sharedPathResolver = makeMockPathResolver(tempDir);
+        sharedPermissionManager = makeMockPermissionManager(true);
+        resolveWorkspacePath = async (_ctx, rawPath) => ({
+          scope: "workspace",
+          absolutePath: join(tempDir, rawPath),
+          relativePath: rawPath,
+          orgId: "org-1",
         });
-
-        findWsForAgent = mock.fn((id) => `ws-${id}`);
 
         await registry.provide({
           logRoot: testLoggerRoot,
-          findWorkspaceIdForAgent: findWsForAgent,
+          workspaceFileAccessService: {
+            pathResolver: sharedPathResolver,
+            externalPermissionManager: sharedPermissionManager,
+          },
         });
 
         // 现在 _reader 已初始化
       });
 
       after(async () => {
-        _resetWorkspaceManager();
         await rm(tempDir, { recursive: true, force: true });
       });
 
@@ -1253,7 +1435,11 @@ describe("Document Module", () => {
         mockGetPdfMetadata.mock.resetCalls();
         mockParseOfficeFn.mock.resetCalls();
         mockGetOfficeMetadata.mock.resetCalls();
-        findWsForAgent.mock.resetCalls();
+
+        sharedPathResolver.resolvePath.mock.resetCalls();
+        sharedPathResolver.resolvePath.mock.mockImplementation(resolveWorkspacePath);
+        sharedPermissionManager.checkReadPermission.mock.resetCalls();
+        sharedPermissionManager.checkReadPermission.mock.mockImplementation(async () => ({ allowed: true }));
 
         parsePdfImpl = ({ filePath }) =>
           Promise.resolve({
@@ -1326,6 +1512,50 @@ describe("Document Module", () => {
         assert.strictEqual(result.matches[0].line, 2);
       });
 
+      it("document_read 外部授权只读 → ok: true", async () => {
+        const externalPath = join(tempDir, "external.pdf");
+        await writeFile(externalPath, "dummy");
+        sharedPathResolver.resolvePath.mock.mockImplementation(async () => ({
+          scope: "external",
+          absolutePath: externalPath,
+          relativePath: null,
+          orgId: "org-1",
+        }));
+
+        const result = await docModule.executeToolCall(
+          { agent: { id: "agent-1" } },
+          "document_read",
+          { path: externalPath },
+        );
+
+        assert.strictEqual(result.ok, true);
+        assert.strictEqual(result.content, "mock PDF content");
+        assert.strictEqual(sharedPermissionManager.checkReadPermission.mock.callCount(), 1);
+      });
+
+      it("document_read 外部未授权 → access_denied", async () => {
+        const externalPath = join(tempDir, "external-denied.pdf");
+        await writeFile(externalPath, "dummy");
+        sharedPathResolver.resolvePath.mock.mockImplementation(async () => ({
+          scope: "external",
+          absolutePath: externalPath,
+          relativePath: null,
+          orgId: "org-1",
+        }));
+        sharedPermissionManager.checkReadPermission.mock.mockImplementation(async () => ({
+          allowed: false,
+        }));
+
+        const result = await docModule.executeToolCall(
+          { agent: { id: "agent-1" } },
+          "document_read",
+          { path: externalPath },
+        );
+
+        assert.strictEqual(result.error, "access_denied");
+        assert.ok(result.message.includes("没有权限读取外部文档"));
+      });
+
       it("unknown_tool → unknown_tool", async () => {
         const result = await docModule.executeToolCall(
           { agent: { id: "agent-1" } },
@@ -1363,34 +1593,38 @@ describe("Document Module", () => {
 
   describe("错误结构一致性", () => {
     let tempDir;
-    let findWsForAgent;
 
     before(async () => {
       tempDir = await mkdtemp(join(tmpdir(), "doc-err-"));
 
-      const mockWs = {
-        resolveAbsolutePath: mock.fn((rel) => join(tempDir, rel)),
-      };
-
-      _setTestWorkspaceManager({
-        getWorkspace: mock.fn(async () => mockWs),
-      });
-
-      findWsForAgent = mock.fn((id) => `ws-${id}`);
-
-      // 确保模块已初始化（如果之前未 provide）
-      try {
+      // 如果模块尚未初始化（例如单独运行本组测试），则创建共享依赖并初始化。
+      if (!sharedPathResolver) {
+        sharedPathResolver = makeMockPathResolver(tempDir);
+        sharedPermissionManager = makeMockPermissionManager(true);
         await registry.provide({
           logRoot: testLoggerRoot,
-          findWorkspaceIdForAgent: findWsForAgent,
+          workspaceFileAccessService: {
+            pathResolver: sharedPathResolver,
+            externalPermissionManager: sharedPermissionManager,
+          },
         });
-      } catch (_e) {
-        // 可能已 provide，忽略
+      } else {
+        // 已初始化时只能原地更新 mock 实现，不能替换 _reader 持有的对象引用。
+        sharedPathResolver.resolvePath.mock.resetCalls();
+        sharedPathResolver.resolvePath.mock.mockImplementation(async (_ctx, rawPath) => ({
+          scope: "workspace",
+          absolutePath: join(tempDir, rawPath),
+          relativePath: rawPath,
+          orgId: "org-1",
+        }));
+        sharedPermissionManager.checkReadPermission.mock.resetCalls();
+        sharedPermissionManager.checkReadPermission.mock.mockImplementation(async () => ({
+          allowed: true,
+        }));
       }
     });
 
     after(async () => {
-      _resetWorkspaceManager();
       await rm(tempDir, { recursive: true, force: true });
     });
 
