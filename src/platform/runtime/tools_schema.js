@@ -444,28 +444,14 @@ export class ToolSchema {
       {
         type: "function",
         function: {
-          name: "file_copy_to_workspace",
-          description: "将已授权的外部文件复制到当前智能体工作区。源路径必须是已授权且 read=true 的外部绝对路径，目标路径必须是工作区相对路径。",
+          name: "copy_file",
+          description: "复制文件。相对路径表示当前智能体工作区，绝对路径表示已授权的外部路径；支持工作区与外部路径之间的任意复制。",
           parameters: {
             type: "object",
             properties: {
-              sourcePath: { type: "string", description: "已授权且 read=true 的外部源文件绝对路径" },
-              destPath: { type: "string", description: "工作区目标相对路径，如 docs/example.txt" }
-            },
-            required: ["sourcePath", "destPath"]
-          }
-        }
-      },
-      {
-        type: "function",
-        function: {
-          name: "file_copy_from_workspace",
-          description: "将当前智能体工作区文件复制到已授权的外部目录。目标路径必须是已授权且 write=true 的外部绝对路径。",
-          parameters: {
-            type: "object",
-            properties: {
-              sourcePath: { type: "string", description: "工作区源文件相对路径" },
-              destPath: { type: "string", description: "已授权且 write=true 的外部目标文件绝对路径" }
+              sourcePath: { type: "string", description: "源文件：工作区相对路径，或已授权且 read=true 的外部绝对路径" },
+              destPath: { type: "string", description: "目标文件：工作区相对路径，或已授权且 write=true 的外部绝对路径" },
+              overwrite: { type: "boolean", description: "若目标存在是否覆盖，默认 false" }
             },
             required: ["sourcePath", "destPath"]
           }
@@ -577,15 +563,15 @@ export class ToolSchema {
         type: "function",
         function: {
           name: "move_file",
-          description: "在工作空间内移动或重命名文件。路径支持工作区相对路径或已授权的外部绝对路径；仅允许同 scope 移动，外部路径需要目标文件夹 write=true。",
+          description: "移动或重命名文件。路径支持工作区相对路径或已授权的外部绝对路径；支持工作区与外部路径之间的移动，外部目标需要 write=true。",
           parameters: {
             type: "object",
             properties: {
-              fromPath: { type: "string", description: "源文件路径：工作区相对路径，或已授权的外部绝对路径" },
-              toPath: { type: "string", description: "目标文件路径：与源路径保持同 scope，外部目标需要 write=true" },
+              sourcePath: { type: "string", description: "源文件路径：工作区相对路径，或已授权的外部绝对路径" },
+              destPath: { type: "string", description: "目标文件路径：工作区相对路径，或已授权且 write=true 的外部绝对路径" },
               overwrite: { type: "boolean", description: "若目标存在是否覆盖，默认 false" }
             },
-            required: ["fromPath", "toPath"]
+            required: ["sourcePath", "destPath"]
           }
         }
       },

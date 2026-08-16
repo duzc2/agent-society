@@ -277,6 +277,18 @@ describe("ExternalAccessLogger", () => {
     assert.strictEqual(agentFiltered.logs[0].error, "access_denied");
   });
 
+  it("logCopy 记录 operation 为 copy，path 为 source，details.destination 为 dest", async () => {
+    const { logger } = await makeLogger();
+
+    await logger.logCopy({ agent: { id: "agent-1" } }, "/src/a.txt", "/dst/b.txt", true);
+
+    const logs = await logger.queryLogs({ operation: "copy" });
+    assert.strictEqual(logs.total, 1);
+    assert.strictEqual(logs.logs[0].operation, "copy");
+    assert.strictEqual(logs.logs[0].path, "/src/a.txt");
+    assert.strictEqual(logs.logs[0].details.destination, "/dst/b.txt");
+  });
+
   it("queryLogs 支持 limit/offset 和文件加载去重", async () => {
     const { logger } = await makeLogger();
 

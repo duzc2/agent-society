@@ -164,10 +164,8 @@ export class ToolExecutor {
           return await this._executeFileJsonlFilter(ctx, args);
         case "file_create_directory":
           return await this._executeFileCreateDirectory(ctx, args);
-        case "file_copy_to_workspace":
-          return await this._executeFileCopyToWorkspace(ctx, args);
-        case "file_copy_from_workspace":
-          return await this._executeFileCopyFromWorkspace(ctx, args);
+        case "copy_file":
+          return await this._executeFileCopy(ctx, args);
         case "file_check_permission":
           return await this._executeFileCheckPermission(ctx, args);
         case "file_list_authorized_folders":
@@ -422,12 +420,8 @@ export class ToolExecutor {
     return this.fileTools._executeFileCreateDirectory(ctx, args);
   }
 
-  async _executeFileCopyToWorkspace(ctx, args) {
-    return this.fileTools._executeFileCopyToWorkspace(ctx, args);
-  }
-
-  async _executeFileCopyFromWorkspace(ctx, args) {
-    return this.fileTools._executeFileCopyFromWorkspace(ctx, args);
+  async _executeFileCopy(ctx, args) {
+    return this.fileTools._executeFileCopy(ctx, args);
   }
 
   async _executeFileCheckPermission(ctx, args) {

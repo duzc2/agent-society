@@ -140,26 +140,17 @@ export class FileTools {
     });
   }
 
-  async _executeFileCopyToWorkspace(ctx, args) {
+  async _executeFileCopy(ctx, args) {
     if (!args.sourcePath || typeof args.sourcePath !== "string") {
-      return { error: "invalid_arguments", message: "缺少必需参数 sourcePath。请提供外部源文件路径。" };
+      return { error: "invalid_arguments", message: "缺少必需参数 sourcePath。请提供源文件路径。" };
     }
     if (!args.destPath || typeof args.destPath !== "string") {
-      return { error: "invalid_arguments", message: "缺少必需参数 destPath。请提供工作区目标路径。" };
+      return { error: "invalid_arguments", message: "缺少必需参数 destPath。请提供目标文件路径。" };
     }
 
-    return this._service().copyToWorkspace(ctx, args.sourcePath, args.destPath);
-  }
-
-  async _executeFileCopyFromWorkspace(ctx, args) {
-    if (!args.sourcePath || typeof args.sourcePath !== "string") {
-      return { error: "invalid_arguments", message: "缺少必需参数 sourcePath。请提供工作区源文件路径。" };
-    }
-    if (!args.destPath || typeof args.destPath !== "string") {
-      return { error: "invalid_arguments", message: "缺少必需参数 destPath。请提供外部目标路径。" };
-    }
-
-    return this._service().copyFromWorkspace(ctx, args.sourcePath, args.destPath);
+    return this._service().copyFile(ctx, args.sourcePath, args.destPath, {
+      overwrite: Boolean(args.overwrite)
+    });
   }
 
   async _executeFileCheckPermission(ctx, args) {
@@ -280,14 +271,14 @@ export class FileTools {
    * 移动/重命名文件的工具执行函数
    */
   async _executeMoveFile(ctx, args) {
-    // 兼容多种参数命名：fromPath/toPath 或 path/new_path
-    const fromPath = (args?.fromPath ?? args?.path ?? args?.from ?? args?.source ?? args?.src)?.toString()?.trim();
-    const toPath = (args?.toPath ?? args?.new_path ?? args?.newPath ?? args?.to ?? args?.dest ?? args?.destination ?? args?.target)?.toString()?.trim();
-    if (!fromPath || !toPath) {
-      return { error: "invalid_arguments", message: "缺少源或目标路径。请提供 fromPath/toPath 或 path/new_path。" };
+    if (!args.sourcePath || typeof args.sourcePath !== "string") {
+      return { error: "invalid_arguments", message: "缺少必需参数 sourcePath。请提供源文件路径。" };
+    }
+    if (!args.destPath || typeof args.destPath !== "string") {
+      return { error: "invalid_arguments", message: "缺少必需参数 destPath。请提供目标文件路径。" };
     }
 
-    return this._service().moveFile(ctx, fromPath, toPath, {
+    return this._service().moveFile(ctx, args.sourcePath, args.destPath, {
       operator: ctx.agent?.id,
       messageId: ctx.currentMessage?.id,
       overwrite: Boolean(args.overwrite)

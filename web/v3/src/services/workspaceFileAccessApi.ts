@@ -34,8 +34,7 @@ export type WorkspaceOperation =
   | 'write'
   | 'list'
   | 'create_dir'
-  | 'copy_to_workspace'
-  | 'copy_from_workspace'
+  | 'copy'
   | 'check_permission';
 
 export interface WorkspaceAccessLog {

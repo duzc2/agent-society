@@ -34,13 +34,13 @@ describe("FileTools 参数校验", () => {
     assert.strictEqual(noPattern.error, "invalid_arguments");
   });
 
-  it("file_copy_to_workspace / file_copy_from_workspace 缺少路径参数返回 invalid_arguments", async () => {
+  it("copy_file 缺少 sourcePath / destPath 返回 invalid_arguments", async () => {
     const tools = new FileTools({});
-    const toWorkspace = await tools._executeFileCopyToWorkspace(ctx(), { sourcePath: "/a" });
-    assert.strictEqual(toWorkspace.error, "invalid_arguments");
+    const noSource = await tools._executeFileCopy(ctx(), { destPath: "/b" });
+    assert.strictEqual(noSource.error, "invalid_arguments");
 
-    const fromWorkspace = await tools._executeFileCopyFromWorkspace(ctx(), { destPath: "/b" });
-    assert.strictEqual(fromWorkspace.error, "invalid_arguments");
+    const noDest = await tools._executeFileCopy(ctx(), { sourcePath: "/a" });
+    assert.strictEqual(noDest.error, "invalid_arguments");
   });
 
   it("file_move_file 缺少源或目标路径返回 invalid_arguments", async () => {
@@ -158,8 +158,7 @@ describe("ToolExecutor file_* 工具分发", () => {
       "file_json_keys",
       "file_jsonl_filter",
       "file_create_directory",
-      "file_copy_to_workspace",
-      "file_copy_from_workspace",
+      "copy_file",
       "file_check_permission",
       "file_list_authorized_folders"
     ];
@@ -188,8 +187,7 @@ describe("ToolExecutor file_* 工具分发", () => {
       file_json_keys: "_executeFileJsonKeys",
       file_jsonl_filter: "_executeFileJsonlFilter",
       file_create_directory: "_executeFileCreateDirectory",
-      file_copy_to_workspace: "_executeFileCopyToWorkspace",
-      file_copy_from_workspace: "_executeFileCopyFromWorkspace",
+      copy_file: "_executeFileCopy",
       file_check_permission: "_executeFileCheckPermission",
       file_list_authorized_folders: "_executeFileListAuthorizedFolders",
       edit_file: "_executeEditFile",

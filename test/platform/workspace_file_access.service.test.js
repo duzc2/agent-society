@@ -271,7 +271,7 @@ describe("WorkspaceFileAccessService", () => {
     assert.strictEqual((await fsp.stat(path.join(writeDir, "a", "b"))).isDirectory(), true);
   });
 
-  it("copyToWorkspace：仅允许外部源复制到工作区，并阻止外部源复制到工作区外", async () => {
+  it("copyFile：外部源复制到工作区，并补 overwrite=false 时 target_exists", async () => {
     const { service, externalConfigManager } = await makeService();
     const readDir = await makeTempDir();
     await fsp.writeFile(path.join(readDir, "source.txt"), "external-content\n", "utf8");
@@ -282,7 +282,7 @@ describe("WorkspaceFileAccessService", () => {
     });
     assert.strictEqual(added.ok, true);
 
-    const copied = await service.copyToWorkspace(ctx(), path.join(readDir, "source.txt"), "imported/source.txt");
+    const copied = await service.copyFile(ctx(), path.join(readDir, "source.txt"), "imported/source.txt");
     assert.strictEqual(copied.ok, true);
     assert.strictEqual(copied.to, "imported/source.txt");
     assert.strictEqual(copied.size, "external-content\n".length);
@@ -290,11 +290,12 @@ describe("WorkspaceFileAccessService", () => {
     const readBack = await service.readLines(ctx(), "imported/source.txt");
     assert.strictEqual(readBack.lines[0], "external-content");
 
-    const escapeAttempt = await service.copyToWorkspace(ctx(), path.join(readDir, "source.txt"), "../escape.txt");
-    assert.strictEqual(escapeAttempt.ok, false);
+    const existing = await service.copyFile(ctx(), path.join(readDir, "source.txt"), "imported/source.txt");
+    assert.strictEqual(existing.ok, false);
+    assert.strictEqual(existing.error, "target_exists");
   });
 
-  it("copyFromWorkspace：仅允许工作区源复制到已授权可写外部路径", async () => {
+  it("copyFile：工作区源复制到已授权可写外部路径", async () => {
     const { service, externalConfigManager } = await makeService();
     const write = await service.writeFile(ctx(), "out/source.txt", "workspace-content\n", {
       operator: "agent1",
@@ -310,10 +311,81 @@ describe("WorkspaceFileAccessService", () => {
     });
     assert.strictEqual(added.ok, true);
 
-    const copied = await service.copyFromWorkspace(ctx(), "out/source.txt", path.join(writeDir, "copied.txt"));
+    const copied = await service.copyFile(ctx(), "out/source.txt", path.join(writeDir, "copied.txt"));
     assert.strictEqual(copied.ok, true);
     assert.strictEqual(copied.from, "out/source.txt");
     assert.strictEqual((await fsp.readFile(path.join(writeDir, "copied.txt"), "utf8")), "workspace-content\n");
+  });
+
+  it("copyFile：外部源复制到已授权可写外部目标", async () => {
+    const { service, externalConfigManager } = await makeService();
+    const sourceDir = await makeTempDir();
+    const destDir = await makeTempDir();
+    const sourcePath = path.join(sourceDir, "source.txt");
+    const destPath = path.join(destDir, "copied.txt");
+    await fsp.writeFile(sourcePath, "external-to-external\n", "utf8");
+
+    await externalConfigManager.addFolder({ path: sourceDir, read: true, write: false });
+    await externalConfigManager.addFolder({ path: destDir, read: true, write: true });
+
+    const copied = await service.copyFile(ctx(), sourcePath, destPath);
+    assert.strictEqual(copied.ok, true);
+    assert.strictEqual(copied.from, sourcePath);
+    assert.strictEqual(copied.to, destPath);
+    assert.strictEqual((await fsp.readFile(destPath, "utf8")), "external-to-external\n");
+  });
+
+  it("copyFile：工作区源复制到工作区目标", async () => {
+    const { service } = await makeService();
+    const write = await service.writeFile(ctx(), "ws/src.txt", "workspace-to-workspace\n", {
+      operator: "agent1",
+      messageId: "msg-1"
+    });
+    assert.strictEqual(write.ok, true);
+
+    const copied = await service.copyFile(ctx(), "ws/src.txt", "ws/dst.txt");
+    assert.strictEqual(copied.ok, true);
+    assert.strictEqual(copied.from, "ws/src.txt");
+    assert.strictEqual(copied.to, "ws/dst.txt");
+    assert.strictEqual((await service.readLines(ctx(), "ws/dst.txt")).lines[0], "workspace-to-workspace");
+  });
+
+  it("moveFile：跨 scope 工作区源移动到已授权可写外部目标", async () => {
+    const { service, externalConfigManager, workspace } = await makeService();
+    const write = await service.writeFile(ctx(), "move/ws.txt", "move-ws\n", {
+      operator: "agent1",
+      messageId: "msg-1"
+    });
+    assert.strictEqual(write.ok, true);
+
+    const writeDir = await makeTempDir();
+    await externalConfigManager.addFolder({ path: writeDir, read: true, write: true });
+    const destPath = path.join(writeDir, "moved.txt");
+
+    const moved = await service.moveFile(ctx(), "move/ws.txt", destPath, {
+      operator: "agent1",
+      messageId: "msg-1"
+    });
+    assert.strictEqual(moved.ok, true);
+    assert.strictEqual(moved.from, "move/ws.txt");
+    assert.strictEqual(moved.to, destPath);
+    assert.strictEqual((await fsp.readFile(destPath, "utf8")), "move-ws\n");
+    await assert.rejects(() => fsp.access(path.join(workspace.rootPath, "move", "ws.txt")));
+  });
+
+  it("moveFile：跨 scope 外部源移动到工作区目标", async () => {
+    const { service, externalConfigManager } = await makeService();
+    const sourceDir = await makeTempDir();
+    const sourcePath = path.join(sourceDir, "source.txt");
+    await fsp.writeFile(sourcePath, "move-external\n", "utf8");
+    await externalConfigManager.addFolder({ path: sourceDir, read: true, write: true });
+
+    const moved = await service.moveFile(ctx(), sourcePath, "moved/from-ext.txt", {});
+    assert.strictEqual(moved.ok, true);
+    assert.strictEqual(moved.from, sourcePath);
+    assert.strictEqual(moved.to, "moved/from-ext.txt");
+    assert.strictEqual((await service.readLines(ctx(), "moved/from-ext.txt")).lines[0], "move-external");
+    await assert.rejects(() => fsp.access(sourcePath));
   });
 
   it("external 未授权读写被拒绝", async () => {

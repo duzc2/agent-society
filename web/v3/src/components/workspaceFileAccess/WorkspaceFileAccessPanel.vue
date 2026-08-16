@@ -119,8 +119,7 @@ const operationOptions: Array<{ value: WorkspaceOperation | ''; label: string }>
   { value: 'write', label: '写入' },
   { value: 'list', label: '列目录' },
   { value: 'create_dir', label: '创建目录' },
-  { value: 'copy_to_workspace', label: '复制到工作区' },
-  { value: 'copy_from_workspace', label: '从工作区复制' },
+  { value: 'copy', label: '复制文件' },
   { value: 'check_permission', label: '权限检查' },
 ];
 
@@ -180,8 +179,7 @@ function operationText(operation: WorkspaceOperation): string {
     write: '写入',
     list: '列目录',
     create_dir: '创建目录',
-    copy_to_workspace: '复制到工作区',
-    copy_from_workspace: '从工作区复制',
+    copy: '复制文件',
     check_permission: '权限检查',
   };
   return texts[operation] || operation;
@@ -194,8 +192,7 @@ function operationBadgeClass(operation: WorkspaceOperation): string {
     write: 'bg-[var(--primary-weak)] text-[var(--primary)]',
     list: 'bg-[var(--surface-3)] text-[var(--text-2)]',
     create_dir: 'bg-[var(--surface-3)] text-[var(--text-2)]',
-    copy_to_workspace: 'bg-[var(--surface-3)] text-[var(--text-2)]',
-    copy_from_workspace: 'bg-[var(--surface-3)] text-[var(--text-2)]',
+    copy: 'bg-[var(--surface-3)] text-[var(--text-2)]',
     check_permission: 'bg-[var(--surface-3)] text-[var(--text-3)]',
   };
   return `${base} ${styles[operation] || 'bg-[var(--surface-3)] text-[var(--text-3)]'}`;

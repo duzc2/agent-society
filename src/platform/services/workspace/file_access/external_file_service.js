@@ -5,7 +5,7 @@
  * - 在统一路径解析器确认目标为 external 后，执行实际的外部文件操作
  * - 所有读写/列目录/建目录均先经过权限管理器
  * - 记录完整审计日志，失败时保留业务上下文与异常堆栈
- * - 本阶段不提供 copy_to_workspace / copy_from_workspace（Stage 4 实现）
+ * - 跨 scope 复制/移动由 WorkspaceFileAccessService 统一处理
  */
 
 import {

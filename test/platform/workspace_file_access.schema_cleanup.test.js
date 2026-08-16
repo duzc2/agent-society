@@ -43,8 +43,7 @@ describe("ToolSchema 文件工具清理", () => {
       "file_json_keys",
       "file_jsonl_filter",
       "file_create_directory",
-      "file_copy_to_workspace",
-      "file_copy_from_workspace",
+      "copy_file",
       "file_check_permission",
       "file_list_authorized_folders"
     ];

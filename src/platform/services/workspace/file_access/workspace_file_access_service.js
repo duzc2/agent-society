@@ -219,9 +219,9 @@ export class WorkspaceFileAccessService {
     return this.externalFileService.deleteFile(ctx, resolved.absolutePath);
   }
 
-  async moveFile(ctx, fromRawPath, toRawPath, options = {}) {
-    const fromResolved = await this._resolve(ctx, fromRawPath, "write");
-    const toResolved = await this._resolve(ctx, toRawPath, "write");
+  async moveFile(ctx, sourcePath, destPath, options = {}) {
+    const fromResolved = await this._resolve(ctx, sourcePath, "write");
+    const toResolved = await this._resolve(ctx, destPath, "write");
 
     const ioError = this._workspaceIOError(fromResolved);
     if (ioError) return ioError;
@@ -230,10 +230,7 @@ export class WorkspaceFileAccessService {
     if (targetIoError) return targetIoError;
 
     if (fromResolved.scope !== toResolved.scope) {
-      return {
-        error: "cross_scope_move_not_allowed",
-        message: "工作区路径与外部授权路径之间不能直接移动，请使用复制工具。"
-      };
+      return this._moveAcrossScopes(ctx, fromResolved, toResolved, options);
     }
 
     if (fromResolved.scope === "workspace") {
@@ -325,206 +322,169 @@ export class WorkspaceFileAccessService {
   }
 
   /**
-   * 从已授权的外部路径复制文件到当前智能体工作区。
-   * 目标路径只允许 workspace，且必须通过 Workspace.resolveAbsolutePath 防逃逸。
+   * 复制文件。相对路径表示工作区，绝对路径表示已授权外部路径。
    */
-  async copyToWorkspace(ctx, sourcePath, destPath) {
-    const operation = "copyToWorkspace";
+  async copyFile(ctx, sourcePath, destPath, options = {}) {
     try {
       if (typeof sourcePath !== "string" || sourcePath.trim() === "") {
         return { ok: false, error: "invalid_path", message: "源路径不能为空" };
       }
+      if (typeof destPath !== "string" || destPath.trim() === "") {
+        return { ok: false, error: "invalid_path", message: "目标路径不能为空" };
+      }
 
       const sourceResolved = await this._resolve(ctx, sourcePath, "read");
-      if (sourceResolved.scope !== "external") {
-        return {
-          ok: false,
-          error: "copy_source_must_be_external",
-          message: "复制到工作区时，源路径必须是已授权的外部绝对路径"
-        };
-      }
-
-      const sourcePermission = await this.externalPermissionManager.checkReadPermission(
-        sourceResolved.absolutePath,
-        sourceResolved.orgId
-      );
-      if (!sourcePermission.allowed) {
-        await this.externalAccessLogger.logCopyToWorkspace(
-          ctx,
-          sourceResolved.absolutePath,
-          destPath,
-          false,
-          "access_denied"
-        );
-        return { ok: false, error: "access_denied", message: "没有权限读取源文件" };
-      }
-
-      if (!existsSync(sourceResolved.absolutePath)) {
-        await this.externalAccessLogger.logCopyToWorkspace(
-          ctx,
-          sourceResolved.absolutePath,
-          destPath,
-          false,
-          "source_not_found"
-        );
-        return { ok: false, error: "source_not_found", message: "源文件不存在" };
-      }
-
-      if (statSync(sourceResolved.absolutePath).isDirectory()) {
-        await this.externalAccessLogger.logCopyToWorkspace(
-          ctx,
-          sourceResolved.absolutePath,
-          destPath,
-          false,
-          "source_is_directory"
-        );
-        return { ok: false, error: "source_is_directory", message: "源路径是目录，不是文件" };
-      }
-
       const destResolved = await this._resolve(ctx, destPath, "write");
-      if (destResolved.scope !== "workspace") {
-        return {
-          ok: false,
-          error: "copy_dest_must_be_workspace",
-          message: "复制到工作区时，目标路径必须是工作区相对路径"
-        };
-      }
 
-      const ioError = this._workspaceIOError(destResolved);
-      if (ioError) return ioError;
-
-      await mkdir(path.dirname(destResolved.absolutePath), { recursive: true });
-      await copyFile(sourceResolved.absolutePath, destResolved.absolutePath);
-
-      const size = statSync(destResolved.absolutePath).size;
-      await this.externalAccessLogger.logCopyToWorkspace(
-        ctx,
-        sourceResolved.absolutePath,
-        destPath,
-        true
-      );
-
-      return {
-        ok: true,
-        from: sourceResolved.absolutePath,
-        to: destResolved.relativePath,
-        size
-      };
+      return await this._copyResolved(ctx, sourceResolved, destResolved, options, {
+        rawSourcePath: sourcePath,
+        rawDestPath: destPath
+      });
     } catch (error) {
-      this.log.error("[WorkspaceFileAccess] 复制到工作区失败", {
+      this.log.error("[WorkspaceFileAccess] 复制文件失败", {
         agentId: ctx?.agent?.id ?? "unknown",
-        operation,
+        operation: "copyFile",
         sourcePath,
         destPath,
         message: error.message,
         stack: error.stack
       });
-      await this.externalAccessLogger.logCopyToWorkspace(ctx, sourcePath, destPath, false, error.message);
       return { ok: false, error: "copy_failed", message: error.message };
     }
   }
 
   /**
-   * 从当前智能体工作区复制文件到已授权且可写的外部路径。
+   * 复制文件核心流程，所有复制组合共用。
+   * @private
    */
-  async copyFromWorkspace(ctx, sourcePath, destPath) {
-    const operation = "copyFromWorkspace";
-    try {
-      if (typeof sourcePath !== "string" || sourcePath.trim() === "") {
-        return { ok: false, error: "invalid_path", message: "源路径不能为空" };
+  async _copyResolved(ctx, sourceResolved, destResolved, options = {}, _raw = {}) {
+    const sourceIoError = this._workspaceIOError(sourceResolved);
+    if (sourceIoError) return sourceIoError;
+    const destIoError = this._workspaceIOError(destResolved);
+    if (destIoError) return destIoError;
+
+    const sourceDisplay = sourceResolved.scope === "workspace" ? sourceResolved.relativePath : sourceResolved.absolutePath;
+    const destDisplay = destResolved.scope === "workspace" ? destResolved.relativePath : destResolved.absolutePath;
+    const hasExternal = sourceResolved.scope === "external" || destResolved.scope === "external";
+
+    const logCopy = async (success, error = null) => {
+      if (!hasExternal) return;
+      await this.externalAccessLogger.logCopy(ctx, sourceDisplay, destDisplay, success, error);
+    };
+
+    if (sourceResolved.scope === "external") {
+      const sourcePermission = await this.externalPermissionManager.checkReadPermission(
+        sourceResolved.absolutePath,
+        sourceResolved.orgId
+      );
+      if (!sourcePermission.allowed) {
+        await logCopy(false, "access_denied");
+        return { ok: false, error: "access_denied", message: "没有权限读取源文件" };
       }
+    }
 
-      const sourceResolved = await this._resolve(ctx, sourcePath, "read");
-      if (sourceResolved.scope !== "workspace") {
-        return {
-          ok: false,
-          error: "copy_source_must_be_workspace",
-          message: "从工作区复制时，源路径必须是工作区相对路径"
-        };
-      }
+    if (!existsSync(sourceResolved.absolutePath)) {
+      await logCopy(false, "source_not_found");
+      return { ok: false, error: "source_not_found", message: "源文件不存在" };
+    }
 
-      const ioError = this._workspaceIOError(sourceResolved);
-      if (ioError) return ioError;
+    if (statSync(sourceResolved.absolutePath).isDirectory()) {
+      await logCopy(false, "source_is_directory");
+      return { ok: false, error: "source_is_directory", message: "源路径是目录，不是文件" };
+    }
 
-      if (!existsSync(sourceResolved.absolutePath)) {
-        return { ok: false, error: "source_not_found", message: "源文件不存在" };
-      }
-
-      if (statSync(sourceResolved.absolutePath).isDirectory()) {
-        return { ok: false, error: "source_is_directory", message: "源路径是目录，不是文件" };
-      }
-
-      const destResolved = await this._resolve(ctx, destPath, "write");
-      if (destResolved.scope !== "external") {
-        return {
-          ok: false,
-          error: "copy_dest_must_be_external",
-          message: "从工作区复制时，目标路径必须是已授权的外部绝对路径"
-        };
-      }
-
+    if (destResolved.scope === "external") {
       const destPermission = await this.externalPermissionManager.checkWritePermission(
         destResolved.absolutePath,
         destResolved.orgId
       );
       if (!destPermission.allowed) {
-        await this.externalAccessLogger.logCopyFromWorkspace(
-          ctx,
-          sourceResolved.absolutePath,
-          destPath,
-          false,
-          "access_denied"
-        );
+        await logCopy(false, "access_denied");
         return { ok: false, error: "access_denied", message: "没有权限写入目标位置" };
       }
+    }
 
-      const targetDir = path.dirname(destResolved.absolutePath);
-      if (!existsSync(targetDir)) {
-        const dirPermission = await this.externalPermissionManager.checkWritePermission(
-          targetDir,
-          destResolved.orgId
-        );
-        if (!dirPermission.allowed) {
-          await this.externalAccessLogger.logCopyFromWorkspace(
-            ctx,
-            sourceResolved.absolutePath,
-            destPath,
-            false,
-            "cannot_create_dir"
-          );
-          return { ok: false, error: "cannot_create_dir", message: "无法创建目标目录，超出授权范围" };
-        }
-        await mkdir(targetDir, { recursive: true });
+    if (existsSync(destResolved.absolutePath)) {
+      if (statSync(destResolved.absolutePath).isDirectory()) {
+        await logCopy(false, "target_is_directory");
+        return { ok: false, error: "target_is_directory", message: "目标路径是目录" };
       }
+      if (!options.overwrite) {
+        await logCopy(false, "target_exists");
+        return { ok: false, error: "target_exists", message: "目标文件已存在" };
+      }
+    }
 
-      await copyFile(sourceResolved.absolutePath, destResolved.absolutePath);
-
-      const size = statSync(destResolved.absolutePath).size;
-      await this.externalAccessLogger.logCopyFromWorkspace(
-        ctx,
-        sourceResolved.absolutePath,
-        destPath,
-        true
+    const targetDir = path.dirname(destResolved.absolutePath);
+    if (destResolved.scope === "external" && !existsSync(targetDir)) {
+      const dirPermission = await this.externalPermissionManager.checkWritePermission(
+        targetDir,
+        destResolved.orgId
       );
+      if (!dirPermission.allowed) {
+        await logCopy(false, "cannot_create_dir");
+        return { ok: false, error: "cannot_create_dir", message: "无法创建目标目录，超出授权范围" };
+      }
+    }
 
-      return {
-        ok: true,
-        from: sourceResolved.relativePath,
-        to: destResolved.absolutePath,
-        size
-      };
+    await mkdir(targetDir, { recursive: true });
+    await copyFile(sourceResolved.absolutePath, destResolved.absolutePath);
+
+    const size = statSync(destResolved.absolutePath).size;
+    await logCopy(true);
+
+    return { ok: true, from: sourceDisplay, to: destDisplay, size };
+  }
+
+  /**
+   * 跨 scope 移动：先复制再删除源文件。
+   * @private
+   */
+  async _moveAcrossScopes(ctx, fromResolved, toResolved, options) {
+    const copyResult = await this._copyResolved(ctx, fromResolved, toResolved, options, {
+      rawSourcePath: fromResolved.absolutePath,
+      rawDestPath: toResolved.absolutePath
+    });
+    if (!copyResult.ok) {
+      return copyResult;
+    }
+
+    let deleteResult;
+    try {
+      if (fromResolved.scope === "workspace") {
+        deleteResult = await fromResolved.workspace.deleteFile(fromResolved.relativePath, {
+          operator: options.operator,
+          messageId: options.messageId
+        });
+      } else {
+        deleteResult = await this.externalFileService.deleteFile(ctx, fromResolved.absolutePath);
+      }
     } catch (error) {
-      this.log.error("[WorkspaceFileAccess] 从工作区复制失败", {
+      this.log.error("[WorkspaceFileAccess] 跨 scope 移动删除源文件失败", {
         agentId: ctx?.agent?.id ?? "unknown",
-        operation,
-        sourcePath,
-        destPath,
+        operation: "moveAcrossScopes",
+        from: fromResolved.absolutePath,
+        to: toResolved.absolutePath,
         message: error.message,
         stack: error.stack
       });
-      await this.externalAccessLogger.logCopyFromWorkspace(ctx, sourcePath, destPath, false, error.message);
-      return { ok: false, error: "copy_failed", message: error.message };
+      return { ok: false, error: "move_failed", message: error.message };
     }
+
+    if (!deleteResult?.ok) {
+      const message = deleteResult?.message ?? "删除源文件失败";
+      this.log.error("[WorkspaceFileAccess] 跨 scope 移动删除源文件失败", {
+        agentId: ctx?.agent?.id ?? "unknown",
+        operation: "moveAcrossScopes",
+        from: fromResolved.absolutePath,
+        to: toResolved.absolutePath,
+        error: deleteResult?.error,
+        message
+      });
+      return { ok: false, error: "move_failed", message };
+    }
+
+    return { ok: true, from: copyResult.from, to: copyResult.to };
   }
 
   /**

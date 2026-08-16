@@ -63,7 +63,7 @@ export class ExternalAccessLogger {
    * @param {{
    *   agentId: string,
    *   agentName: string,
-   *   operation: 'read' | 'write' | 'list' | 'copy_to_workspace' | 'copy_from_workspace' | 'check_permission',
+   *   operation: 'read' | 'write' | 'list' | 'copy' | 'check_permission',
    *   path: string,
    *   success: boolean,
    *   error?: string,
@@ -190,45 +190,23 @@ export class ExternalAccessLogger {
   }
 
   /**
-   * 记录复制到工作区操作
+   * 记录复制操作
    * @param {object} ctx - 智能体上下文
    * @param {string} sourcePath
    * @param {string} destPath
    * @param {boolean} success
    * @param {string} [error]
    */
-  async logCopyToWorkspace(ctx, sourcePath, destPath, success, error = null) {
+  async logCopy(ctx, sourcePath, destPath, success, error = null) {
     const orgInfo = this._getOrgInfo(ctx);
     await this.log({
       agentId: ctx?.agent?.id ?? "unknown",
       agentName: ctx?.agent?.roleName ?? ctx?.agent?.id ?? "unknown",
-      operation: "copy_to_workspace",
+      operation: "copy",
       path: sourcePath,
       success,
       error,
       details: { destination: destPath },
-      ...orgInfo
-    });
-  }
-
-  /**
-   * 记录从工作区复制操作
-   * @param {object} ctx - 智能体上下文
-   * @param {string} sourcePath
-   * @param {string} destPath
-   * @param {boolean} success
-   * @param {string} [error]
-   */
-  async logCopyFromWorkspace(ctx, sourcePath, destPath, success, error = null) {
-    const orgInfo = this._getOrgInfo(ctx);
-    await this.log({
-      agentId: ctx?.agent?.id ?? "unknown",
-      agentName: ctx?.agent?.roleName ?? ctx?.agent?.id ?? "unknown",
-      operation: "copy_from_workspace",
-      path: destPath,
-      success,
-      error,
-      details: { source: sourcePath },
       ...orgInfo
     });
   }
