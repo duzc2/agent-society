@@ -459,6 +459,12 @@ function formatEntry(entry) {
 function _buildSystemPrompt() {
   let prompt = processManager.getSystemPromptSection();
 
+  // 使用优先级（重要）：工作区自动化文件处理应优先使用 sandbox
+  prompt += "\n\n【使用优先级（重要）】\n" +
+    "工作区内和已授权的路径下自动化文件处理（读取、转换、生成、批量修改文件等）应优先使用 sandbox（沙箱 JS），而不是 localcmd。\n" +
+    "localcmd 需要权限审核，可能被拒绝或需要用户确认而中断流程；sandbox 无需权限、直接读写工作区文件。\n" +
+    "仅在 sandbox 无法完成（需要网络、需要调用外部命令、需要运行非 JavaScript 程序）时才使用 localcmd。";
+
   // 附加策略信息
   if (policyStore) {
     const all = policyStore.getAll();

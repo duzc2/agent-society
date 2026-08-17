@@ -21,7 +21,8 @@ export default {
   name: "sandbox",
   toolGroupId: "sandbox",
   toolGroupDescription:
-    "安全沙箱 - 在隔离的 Node.js 环境中运行 JavaScript 代码，无法访问网络和工作区外的文件",
+    "安全沙箱 - 在隔离的 Node.js 环境中运行 JavaScript 代码，无法访问网络和工作区外的文件；" +
+    "工作区或其他已授权的路径下文件自动化处理优先使用本工具组（无需用户单独授权），优于 localcmd",
 
   /**
    * 初始化模块
@@ -139,6 +140,11 @@ export default {
 function _getSystemPrompt() {
   return `【JS 代码沙箱环境】
 你可以在隔离的 Node.js 沙箱中执行 JavaScript 代码，用于文件处理、数据处理等任务。
+
+使用优先级（重要）：
+- 在工作区内自动化处理文件（读取、转换、生成、批量修改文件等）时，应优先使用 sandbox_* 工具，而不是 localcmd。
+- 原因：localcmd 需要权限审核，可能被拒绝或需要用户确认而中断自动化流程；sandbox 无需权限，直接读写工作区文件，适合无人值守的自动化处理。
+- 仅在 sandbox 无法完成（需要网络、需要调用外部程序或命令行、需要运行非 JavaScript 程序）时，才回退到 localcmd。
 
 运行环境：
 - Node.js（ESM）工作目录为工作区根目录，可 import 工作区内的 .mjs 文件

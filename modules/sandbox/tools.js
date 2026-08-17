@@ -14,7 +14,8 @@ export function getToolDefinitions() {
           "运行环境：Node.js（ESM），工作目录为工作区根目录，可用于文件处理、数据处理等任务。" +
           "限制：无法访问网络、无法访问工作区外的文件、无法创建子进程或 Worker。" +
           "代码必须是完整的、可独立运行的程序，包含所有 import/require 语句。" +
-          "进程将持续运行直到完成或调用 sandbox_kill 终止。",
+          "进程将持续运行直到完成或调用 sandbox_kill 终止。" +
+          "需要自动化处理工作区或其他已授权的路径下文件时，优先用本工具而非 localcmd（无需用户单独授权、不中断流程）。",
         parameters: {
           type: "object",
           properties: {
