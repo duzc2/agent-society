@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>启动器</title>
+  <link rel="stylesheet" href="progress.css" />
+</head>
+<body>
+  <div class="card" data-tauri-drag-region>
+    <div id="phase-starting">
+      <div class="title">正在启动服务器…</div>
+      <div class="progress-track"><div class="progress-bar"></div></div>
+      <div class="elapsed">已用时 <span id="elapsed">0</span>s</div>
+    </div>
+    <div id="phase-failed" hidden>
+      <div class="title error">启动失败</div>
+      <div id="failed-reason" class="reason"></div>
+      <div class="buttons">
+        <button id="btn-retry">重试</button>
+        <button id="btn-exit">退出</button>
+      </div>
+    </div>
+    <div id="phase-stopping" hidden>
+      <div class="title">正在停止服务器…</div>
+      <div class="progress-track"><div class="progress-bar"></div></div>
+    </div>
+  </div>
+  <script src="progress.js"></script>
+</body>
+</html>

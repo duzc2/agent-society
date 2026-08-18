@@ -1,0 +1,30 @@
+[package]
+name = "agent-society-launcher"
+version = "0.1.0"
+description = "Agent Society 服务器引导启动器(GUI)"
+edition = "2021"
+
+[lib]
+name = "agent_society_launcher_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# 版本于 2026-08-19 经 crates.io API 核实为最新稳定版,精确锁定
+tauri = { version = "=2.11.5", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "=2.4.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+  "Win32_Foundation",           # HANDLE/GetLastError/CloseHandle/SetHandleInformation
+  "Win32_Security",             # SECURITY_ATTRIBUTES(管道可继承)
+  "Win32_System_Console",       # GenerateConsoleCtrlEvent/AttachConsole/FreeConsole/CTRL_BREAK_EVENT
+  "Win32_System_Environment",   # GetEnvironmentStringsW(诊断/对照用)
+  "Win32_System_Pipes",         # CreatePipe
+  "Win32_System_Threading",     # CreateProcessW/STARTUPINFOW/PROCESS_INFORMATION/GetExitCodeProcess/TerminateProcess/STILL_ACTIVE
+  "Win32_UI_WindowsAndMessaging" # SW_HIDE(隐藏控制台窗口)
+] }
