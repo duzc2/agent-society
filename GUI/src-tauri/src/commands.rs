@@ -70,6 +70,86 @@ pub fn launcher_exit(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 调试模式右键:弹出单条目菜单("退出调试")。结构与 monitor_context_menu 相同:
+/// async(防主线程死锁)+ 点击坐标定位 + POPUP_ACTIVE 重入守卫。
+/// 菜单点击由 run() 里注册的全局 on_menu_event 分发(无托盘,popup 事件仍走全局监听器)。
+#[tauri::command]
+pub async fn skin_debug_menu(app: tauri::AppHandle, x: f64, y: f64) -> Result<(), String> {
+    static POPUP_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if POPUP_ACTIVE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Ok(()); // 上一次弹出尚未结束,忽略重入
+    }
+    let logger = app.state::<FileLogger>().inner().clone();
+    let window = app
+        .get_webview_window("monitor")
+        .ok_or_else(|| "监视窗口不存在".to_string())?;
+    let menu = crate::tray::build_debug_menu(&app).map_err(|e| e.to_string())?;
+    let result = window.popup_menu_at(&menu, tauri::LogicalPosition::new(x, y));
+    POPUP_ACTIVE.store(false, std::sync::atomic::Ordering::SeqCst);
+    match result {
+        Ok(()) => {
+            logger.info("调试菜单弹出", Some(&format!("x={} y={}", x, y)));
+            Ok(())
+        }
+        Err(e) => {
+            logger.error(&format!("调试菜单弹出失败: {}", e), None);
+            Err(e.to_string())
+        }
+    }
+}
+
+/// 调试模式退出(Esc 注入脚本与"退出调试"菜单项调用)。
+#[tauri::command]
+pub fn skin_debug_exit(app: tauri::AppHandle) -> Result<(), String> {
+    if !crate::skin::is_debug() {
+        return Err("非调试模式".to_string());
+    }
+    app.exit(0);
+    Ok(())
+}
+
+/// 设置界面:枚举两个皮肤文件夹的全部皮肤(含无效皮肤与预览状态)+ 当前皮肤键。
+#[tauri::command]
+pub fn settings_get(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let logger = app.state::<FileLogger>().inner().clone();
+    let roots = app.state::<crate::skin::SkinRoots>().inner().clone();
+    let (entries, errors) = crate::skin::enumerate_skins(&roots);
+    for e in errors {
+        logger.error("皮肤枚举错误", Some(&e));
+    }
+    let current = {
+        let state = app.state::<LauncherState>();
+        let guard = state.current_skin.lock().unwrap();
+        guard.clone()
+    };
+    Ok(serde_json::json!({
+        "skins": entries,
+        "current": current,
+        "officialRoot": roots.official.map(|p| p.display().to_string()),
+        "userRoot": roots.user.map(|p| p.display().to_string()),
+    }))
+}
+
+/// 设置界面"应用":运行时换肤(重建监视窗)+ 持久化 monitorSkin。失败不切换。
+/// **必须是 async 命令**:apply 需要 destroy 旧窗后等 Destroyed 事件经主线程
+/// 事件循环释放 label(同步命令阻塞主线程,事件永远无法处理 → "label already exists")。
+#[tauri::command]
+pub async fn settings_apply(app: tauri::AppHandle, key: String) -> Result<(), String> {
+    crate::apply_skin(&app, &key)
+}
+
+/// 设置界面"关闭"按钮:隐藏设置窗口。
+#[tauri::command]
+pub fn settings_close(app: tauri::AppHandle) -> Result<(), String> {
+    match app.get_webview_window("settings") {
+        Some(w) => {
+            let _ = w.hide();
+            Ok(())
+        }
+        None => Err("设置窗口不存在".to_string()),
+    }
+}
+
 /// 监视窗口右键:在右键点击处弹出与托盘完全相同的原生菜单。
 /// 菜单内容与点击行为只有一处定义(tray::build_menu / tray::handle_menu_event);
 /// muda::Menu 内部是 Rc<RefCell>(非 Send),不能放进 managed state,

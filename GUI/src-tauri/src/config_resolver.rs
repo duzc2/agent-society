@@ -12,6 +12,8 @@ pub const DEFAULT_MAX_DEPTH: u8 = 10;
 pub struct LauncherConfig {
     pub server_root: Option<String>,
     pub startup_timeout_sec: Option<u64>,
+    /// 监视窗皮肤(技术键 official:<folder> / user:<folder> / 裸文件夹名)
+    pub monitor_skin: Option<String>,
 }
 
 /// 查找 launcher.json:exe 旁 → exe 旁 config/ → GUI 项目根 config/(开发布局)
@@ -50,9 +52,15 @@ pub fn parse_launcher_config(path: &Path) -> Result<LauncherConfig, String> {
         .filter(|s| !s.is_empty())
         .map(String::from);
     let startup_timeout_sec = v.get("startupTimeoutSec").and_then(Value::as_u64);
+    let monitor_skin = v
+        .get("monitorSkin")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(String::from);
     Ok(LauncherConfig {
         server_root,
         startup_timeout_sec,
+        monitor_skin,
     })
 }
 
@@ -137,6 +145,49 @@ pub fn resolve_http_port(server_root: &Path) -> (u16, String) {
         DEFAULT_PORT,
         format!("默认 {}(config/app.local.json 与 app.json 均不存在)", DEFAULT_PORT),
     )
+}
+
+/// 将 monitorSkin 写入 launcher.json:read-modify-write 保留其他键(serverRoot/
+/// startupTimeoutSec/未知键),pretty 序列化,tmp+rename 覆盖写。
+/// 目标文件:find_launcher_config 命中者优先;均不存在时 dev 写 <gui_root>/config/launcher.json、
+/// release 写 <exe_dir>/config/launcher.json(自动建目录)。
+pub fn persist_monitor_skin(exe_dir: &Path, key: &str) -> Result<(), String> {
+    let target = match find_launcher_config(exe_dir) {
+        Some(p) => p,
+        None => {
+            let base = find_gui_root(exe_dir, 4)
+                .map(|g| g.join("config"))
+                .unwrap_or_else(|| exe_dir.join("config"));
+            std::fs::create_dir_all(&base)
+                .map_err(|e| format!("创建配置目录失败: {}: {}", base.display(), e))?;
+            base.join("launcher.json")
+        }
+    };
+    let mut value: Value = match std::fs::read_to_string(&target) {
+        Ok(raw) => serde_json::from_str(&raw)
+            .map_err(|e| format!("{} JSON 解析失败: {}", target.display(), e))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(e) => return Err(format!("读取 {} 失败: {}", target.display(), e)),
+    };
+    if !value.is_object() {
+        return Err(format!("{} 顶层必须是 JSON 对象", target.display()));
+    }
+    value["monitorSkin"] = Value::String(key.to_string());
+    let pretty =
+        serde_json::to_string_pretty(&value).map_err(|e| format!("序列化失败: {}", e))?;
+    let tmp = target.with_extension("json.tmp");
+    std::fs::write(&tmp, pretty)
+        .map_err(|e| format!("写入 {} 失败: {}", tmp.display(), e))?;
+    // std::fs::rename 在 Windows 上等价 MoveFileExW(MOVEFILE_REPLACE_EXISTING),可覆盖目标
+    std::fs::rename(&tmp, &target).map_err(|e| {
+        format!(
+            "重命名 {} → {} 失败: {}",
+            tmp.display(),
+            target.display(),
+            e
+        )
+    })?;
+    Ok(())
 }
 
 /// 只提取 httpPort 字段(u64 整数、1..=65535),不反序列化整个配置,
@@ -283,6 +334,67 @@ mod tests {
         let err = resolve_server_root(&exe_dir, 10).unwrap_err();
         assert!(err.contains("launcher.json 覆盖也失败"), "{}", err);
         assert!(err.contains("nowhere"), "{}", err);
+    }
+
+    #[test]
+    fn launcher_config_reads_monitor_skin() {
+        let root = temp_dir("monitor-skin");
+        let file = root.join("launcher.json");
+        fs::write(
+            &file,
+            r#"{"serverRoot": "C:\\srv", "monitorSkin": "user:classic", "other": 1}"#,
+        )
+        .unwrap();
+        let cfg = parse_launcher_config(&file).unwrap();
+        assert_eq!(cfg.monitor_skin.as_deref(), Some("user:classic"));
+        assert_eq!(cfg.server_root.as_deref(), Some("C:\\srv"));
+        // 缺失/空串 → None
+        fs::write(&file, r#"{"startupTimeoutSec": 90}"#).unwrap();
+        assert_eq!(parse_launcher_config(&file).unwrap().monitor_skin, None);
+        fs::write(&file, r#"{"monitorSkin": ""}"#).unwrap();
+        assert_eq!(parse_launcher_config(&file).unwrap().monitor_skin, None);
+    }
+
+    #[test]
+    fn persist_monitor_skin_preserves_other_keys() {
+        let root = temp_dir("persist-keep");
+        let file = root.join("launcher.json");
+        fs::write(&file, r#"{"serverRoot": "C:\\srv", "custom": {"a": 1}}"#).unwrap();
+        persist_monitor_skin(&root, "user:classic").unwrap();
+        let cfg = parse_launcher_config(&file).unwrap();
+        assert_eq!(cfg.monitor_skin.as_deref(), Some("user:classic"));
+        // 其他键保留
+        let raw = fs::read_to_string(&file).unwrap();
+        assert!(raw.contains("C:\\\\srv"), "{}", raw);
+        assert!(raw.contains("custom"), "{}", raw);
+        assert!(!root.join("launcher.json.tmp").exists());
+    }
+
+    #[test]
+    fn persist_monitor_skin_creates_when_missing() {
+        let root = temp_dir("persist-create");
+        // 无 launcher.json → dev 布局(gui_root 标记)写 <gui_root>/config/launcher.json
+        let gui = root.join("GUI");
+        fs::create_dir_all(gui.join("src-tauri")).unwrap();
+        fs::write(gui.join("src-tauri").join("tauri.conf.json"), "{}").unwrap();
+        let exe_dir = gui.join("src-tauri").join("target").join("debug");
+        fs::create_dir_all(&exe_dir).unwrap();
+        persist_monitor_skin(&exe_dir, "official:gauge").unwrap();
+        let file = gui.join("config").join("launcher.json");
+        assert!(file.is_file());
+        assert_eq!(
+            parse_launcher_config(&file).unwrap().monitor_skin.as_deref(),
+            Some("official:gauge")
+        );
+    }
+
+    #[test]
+    fn persist_monitor_skin_errors_on_bad_content() {
+        let root = temp_dir("persist-bad");
+        fs::write(root.join("launcher.json"), "not json{").unwrap();
+        assert!(persist_monitor_skin(&root, "classic").unwrap_err().contains("JSON 解析失败"));
+        fs::write(root.join("launcher.json"), "[1,2]").unwrap();
+        assert!(persist_monitor_skin(&root, "classic").unwrap_err().contains("对象"));
     }
 
     #[test]

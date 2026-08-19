@@ -1,0 +1,66 @@
+/* 环形仪表皮肤:SVG 渐变圆环显示 working/total 比例,中心数字。
+   环周长与 dashoffset 在 main.js 里以 JS 计算(2*PI*84 ≈ 527.8)。 */
+html,
+body {
+  background: transparent;
+  margin: 0;
+  overflow: hidden;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.35));
+}
+
+.track {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 14;
+}
+
+.ring {
+  fill: none;
+  stroke: url(#grad);
+  stroke-width: 14;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 100px 100px;
+  transition: stroke-dashoffset 0.6s ease;
+}
+
+.center {
+  position: absolute;
+  text-align: center;
+  color: #ffffff;
+}
+
+.ratio {
+  font-size: 30px;
+  font-weight: 700;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+.slash {
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.5);
+  margin: 0 2px;
+}
+
+#working {
+  color: #fbbf24;
+}
+
+.status {
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}

@@ -1,0 +1,11 @@
+{
+  "name": "环形仪表",
+  "version": 1,
+  "width": 240,
+  "height": 240,
+  "transparency": true,
+  "alwaysOnTop": true,
+  "shadow": false,
+  "resizable": false,
+  "skipTaskbar": true
+}

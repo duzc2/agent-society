@@ -1,0 +1,51 @@
+/* 极简数字皮肤:无卡片、纯文字大字数字,窗口本身完全透明。 */
+html,
+body {
+  background: transparent;
+  margin: 0;
+  overflow: hidden;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.layout {
+  padding: 10px 14px;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 1px;
+}
+
+/* 大字数字加轻微描边阴影,保证任意桌面背景上可读 */
+.num {
+  font-size: 34px;
+  font-weight: 700;
+  color: #ffffff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7), 0 0 10px rgba(0, 0, 0, 0.45);
+}
+
+.num.accent {
+  color: #fbbf24;
+}
+
+.gap {
+  flex: 1;
+  min-width: 14px;
+}
+
+.sub {
+  margin-top: 4px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}

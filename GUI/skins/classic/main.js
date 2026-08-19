@@ -1,8 +1,7 @@
-// 监视窗口内嵌回退页:监听全局 dateUpdate CustomEvent 渲染服务器状态与智能体计数。
-// 皮肤系统数据契约:启动器每次数据更新向监视窗口派发 window 上的 CustomEvent
-// "dateUpdate"(detail = {total, working, server, updated});右键菜单由启动器在
-// on_page_load 时统一注入(皮肤页与回退页同机制),本页不再自行处理。
-
+// 经典卡片皮肤:监听全局 dateUpdate CustomEvent。
+// 契约:window 上的 "dateUpdate" 事件,detail = {total, working, server, updated}
+//   total/working: number 或 null;server: "up"|"busy"|"down"|"stopping";updated: bool
+// 皮肤不依赖 Tauri API;右键菜单由启动器统一注入。
 const dot = document.getElementById("status-dot");
 const statusText = document.getElementById("status-text");
 const updatedEl = document.getElementById("updated");

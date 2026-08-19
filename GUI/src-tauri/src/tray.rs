@@ -16,8 +16,9 @@ use tauri::Manager;
 pub fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let open_item = MenuItem::with_id(app, "open_main", "打开主界面", true, None::<&str>)?;
     let monitor_item = MenuItem::with_id(app, "toggle_monitor", "监视窗口", true, None::<&str>)?;
+    let settings_item = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    Menu::with_items(app, &[&open_item, &monitor_item, &quit_item])
+    Menu::with_items(app, &[&open_item, &monitor_item, &settings_item, &quit_item])
 }
 
 /// 菜单项点击行为(托盘与 popup 共用,只有这一处定义)。
@@ -25,9 +26,17 @@ pub fn handle_menu_event(app: &tauri::AppHandle, event: MenuEvent) {
     match event.id().as_ref() {
         "open_main" => windows::show_main(app),
         "toggle_monitor" => windows::toggle_monitor(app),
+        "settings" => windows::show_settings(app),
         "quit" => crate::begin_quit(app.clone()),
         _ => {}
     }
+}
+
+/// 调试模式菜单:单条"退出调试"(调试模式无托盘,popup 点击由
+/// run() 里 Builder::on_menu_event 注册的全局监听器分发)。
+pub fn build_debug_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let quit_item = MenuItem::with_id(app, "debug_quit", "退出调试", true, None::<&str>)?;
+    Menu::with_items(app, &[&quit_item])
 }
 
 pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<tauri::tray::TrayIcon> {

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>环形仪表</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="wrap" data-tauri-drag-region>
+    <svg viewBox="0 0 200 200" width="176" height="176">
+      <defs>
+        <linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#4f8ef7" />
+          <stop offset="100%" stop-color="#2dd4a7" />
+        </linearGradient>
+      </defs>
+      <circle class="track" cx="100" cy="100" r="84" />
+      <circle id="ring" class="ring" cx="100" cy="100" r="84" />
+    </svg>
+    <div class="center">
+      <div class="ratio">
+        <span id="working">--</span><span class="slash">/</span><span id="total">--</span>
+      </div>
+      <div id="status-text" class="status">连接中…</div>
+    </div>
+  </div>
+  <script src="main.js"></script>
+</body>
+</html>

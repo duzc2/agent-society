@@ -10,3 +10,6 @@ src-tauri/binaries/*
 
 # tauri 生成
 src-tauri/gen/
+
+# 用户自定义皮肤(官方皮肤在 skins/,随 git 管理)
+skins-user/

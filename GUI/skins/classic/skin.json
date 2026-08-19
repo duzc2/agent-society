@@ -1,0 +1,11 @@
+{
+  "name": "经典卡片",
+  "version": 1,
+  "width": 300,
+  "height": 112,
+  "transparency": true,
+  "alwaysOnTop": true,
+  "shadow": false,
+  "resizable": false,
+  "skipTaskbar": true
+}

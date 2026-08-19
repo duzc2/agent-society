@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "进度/监视窗口最小权限:invoke 与事件监听、无边框拖动",
-  "windows": ["progress", "monitor"],
+  "windows": ["progress", "monitor", "settings"],
   "permissions": ["core:default", "core:window:allow-start-dragging"]
 }
