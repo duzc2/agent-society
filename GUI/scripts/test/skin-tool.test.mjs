@@ -386,6 +386,9 @@ test("main check 合法/非法退出码", () => {
 test("main debug:缺 exe 自动构建后启动;构建失败/spawn 异常 → 1;有 exe 直接启动", () => {
   const roots = tempRoots();
   makeSkin(roots, "official", "good");
+  // 模拟 detached 子进程对象:unref 被调用(工具退出后调试实例应继续存活)
+  const fakeChild = () => ({ unref: () => { unrefCalls++; } });
+  let unrefCalls = 0;
 
   // exe 缺失 → 自动 cargo build → 构建成功 → 用新探测到的 exe 启动
   const spawned = [];
@@ -396,13 +399,14 @@ test("main debug:缺 exe 自动构建后启动;构建失败/spawn 异常 → 1;�
       roots,
       exeResolver: () => (++probe === 1 ? null : "fake.exe"),
       builder: (cmd, args) => { built.push({ cmd, args }); return { status: 0 }; },
-      spawner: (cmd, args) => spawned.push({ cmd, args }),
+      spawner: (cmd, args) => { spawned.push({ cmd, args }); return fakeChild(); },
       out: captureOut(),
     }),
     0,
   );
   assert.deepEqual(built, [{ cmd: "cargo", args: ["build"] }]);
   assert.deepEqual(spawned, [{ cmd: "fake.exe", args: ["--skin-debug", "good"] }]);
+  assert.equal(unrefCalls, 1, "spawn 后必须 unref,工具退出时调试实例才能存活");
 
   // 构建失败 → 1 + 构建指引
   const outFail = captureOut();
@@ -426,7 +430,7 @@ test("main debug:缺 exe 自动构建后启动;构建失败/spawn 异常 → 1;�
       roots,
       exeResolver: () => "fake.exe",
       builder: () => { built2.push(1); return { status: 0 }; },
-      spawner: (cmd, args) => spawned2.push({ cmd, args }),
+      spawner: (cmd, args) => { spawned2.push({ cmd, args }); return fakeChild(); },
       out: captureOut(),
     }),
     0,

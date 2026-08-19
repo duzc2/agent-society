@@ -216,6 +216,29 @@ pub fn dispatch_monitor_update(app: &tauri::AppHandle, payload: &serde_json::Val
     }
 }
 
+/// 向监视窗口派发命中区域覆盖层开关(与 dateUpdate 同机制:注入 DOM CustomEvent;
+/// 页面用普通 addEventListener 接收,不依赖 Tauri 事件系统)。visible 为布尔。
+pub fn dispatch_hit_overlay_toggle(app: &tauri::AppHandle, visible: bool) {
+    let logger = app.state::<FileLogger>().inner().clone();
+    let window = match app.get_webview_window("monitor") {
+        Some(w) => w,
+        None => {
+            logger.error("监视窗口不存在,无法派发覆盖层开关", None);
+            return;
+        }
+    };
+    let js = format!(
+        "window.dispatchEvent(new CustomEvent(\"hit-overlay-toggle\", {{ detail: {{ visible: {} }} }}));",
+        visible
+    );
+    if let Err(e) = window.eval(&js) {
+        logger.error(
+            &format!("派发覆盖层开关失败: {}", e),
+            Some("window.eval"),
+        );
+    }
+}
+
 /// 显示主窗口(托盘菜单/双击/单实例唤起共用);窗口未创建时记日志不动作。
 pub fn show_main(app: &tauri::AppHandle) {
     let logger = app.state::<FileLogger>().inner().clone();

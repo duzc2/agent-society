@@ -403,7 +403,14 @@ export function main(argv, deps = {}) {
   const {
     roots = defaultRoots(),
     exeResolver = resolveExe,
-    spawner = (cmd, args) => spawn(cmd, args, { stdio: "inherit" }),
+    // detached + unref:让调试实例脱离本工具的作业对象/控制台,工具退出后悬浮窗继续存活。
+    // 默认(非 detached)spawn 时,若父进程被作业对象包裹(如 IDE 任务/Claude Code 的 !
+    // 前缀等),子进程会在工具退出瞬间被回收——表现为"校验通过但窗口不出现"。
+    spawner = (cmd, args) => {
+      const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+      child.unref();
+      return child;
+    },
     builder = (cmd, args, cwd) => spawnSync(cmd, args, { cwd, stdio: "inherit" }),
     out = console,
   } = deps;
@@ -461,7 +468,9 @@ export function main(argv, deps = {}) {
   out.log("仅打开皮肤悬浮窗;假数据每 10s 随机变化;不启动服务器/托盘/单实例(可与生产实例并存)。");
   out.log('退出调试:悬浮窗右键菜单"退出调试" / Esc / 关闭窗口。');
   try {
-    spawner(exe, ["--skin-debug", parsed.skin]);
+    const child = spawner(exe, ["--skin-debug", parsed.skin]);
+    // 解除子进程与工具事件循环的绑定:工具立即退出,调试实例继续存活
+    child?.unref?.();
   } catch (err) {
     out.error(`❌ 启动失败: ${err && err.message ? err.message : err}`);
     return 1;

@@ -127,14 +127,7 @@ pub fn run() {
             } else if event.id().as_ref() == "debug_toggle_hit_overlay" {
                 // 切换覆盖层显示并把新状态推给调试页面(页面侧 svg.style.display 跟随)
                 let visible = skin::toggle_hit_overlay();
-                if let Err(e) = app.emit_to(
-                    "monitor",
-                    "hit-overlay-toggle",
-                    serde_json::json!({ "visible": visible }),
-                ) {
-                    let logger = app.state::<FileLogger>().inner().clone();
-                    logger.error(&format!("发射覆盖层开关事件失败: {}", e), Some("hit_overlay"));
-                }
+                windows::dispatch_hit_overlay_toggle(app, visible);
             }
         });
     } else {
