@@ -247,13 +247,14 @@ fn monitor_loop(app: tauri::AppHandle, logger: FileLogger) {
             windows::show_main(&app);
             if owned {
                 logger.info("服务器就绪", Some(&format!("port={} owned=true", port)));
-                watch_child(app, logger);
             } else {
                 logger.info(
                     "端口上已有 Agent Society 服务器(外部实例),本 GUI 退出时不会停止它",
                     Some(&format!("port={}", port)),
                 );
             }
+            // owned 与 external 都进入心跳监控:端口关闭 → 退出启动器
+            watch_after_ready(app, logger);
         }
         readiness::PollOutcome::Failed(reason) => {
             logger.error("服务器启动失败", Some(&reason));
@@ -269,65 +270,93 @@ fn monitor_loop(app: tauri::AppHandle, logger: FileLogger) {
     }
 }
 
-/// 就绪后守望。子进程退出不是无条件失败:端口预占场景下,"端口可连"先于
-/// "子进程退出判决"到达,会出现短暂的 ReadyOwned → 子进程 exit(0) 序列。
-/// 此时按退出码决策表重评估:exit=0 + 可连 + 校验过 → 外部实例(owned=false);
-/// 否则 Failed。返回 true 表示已进入终态,无需继续守望。
+/// 就绪后的监控循环(owned 与 external 都进入):
+/// - 每 1s 心跳探端口:Up/Busy 重置计数;连续 3 次 Down(连接被拒绝)→ 端口已关闭 → 退出启动器。
+///   Busy(连接超时,如服务器繁忙 backlog 满)不计入关闭——这是用户明确要求的容错。
+/// - owned 时同时监视子进程:退出后重评估——端口上还有校验过的 Agent Society → 外部实例;
+///   端口已关 → 交给心跳退出;端口被无关程序占用 → Failed(保留重试 UI)。
+fn watch_after_ready(app: tauri::AppHandle, logger: FileLogger) {
+    let state = app.state::<LauncherState>();
+    let port = state.port;
+    let mut heartbeat = readiness::HeartbeatState::default();
+    const HEARTBEAT_DOWN_THRESHOLD: u32 = 3;
+
+    loop {
+        std::thread::sleep(Duration::from_secs(1));
+        // 退出序列开始(Stopping)后不再探测
+        if !matches!(&*state.phase.lock().unwrap(), Phase::Ready) {
+            return;
+        }
+        // 1) 子进程监视(仅 owned)
+        if state.owned.load(Ordering::SeqCst) {
+            if let Some(st) = try_wait_child(&state, &logger) {
+                reevaluate_after_child_exit(&app, &state, &logger, st);
+                // reevaluate 可能把相位改为 Failed 或 owned=false;下一轮由相位检查兜底
+                if !matches!(&*state.phase.lock().unwrap(), Phase::Ready) {
+                    return;
+                }
+            }
+        }
+        // 2) 端口心跳
+        let probe = readiness::tcp_probe_detailed(port, readiness::PROBE_TIMEOUT);
+        match readiness::heartbeat_step(&mut heartbeat, probe, HEARTBEAT_DOWN_THRESHOLD) {
+            readiness::HeartbeatAction::Continue => {}
+            readiness::HeartbeatAction::Exit => {
+                logger.error(
+                    "心跳检测:服务器端口已关闭,启动器退出",
+                    Some(&format!(
+                        "port={} consecutive_down={}",
+                        port, heartbeat.consecutive_down
+                    )),
+                );
+                begin_quit(app);
+                return;
+            }
+        }
+    }
+}
+
+/// 就绪后子进程退出时的重评估:
+/// - 端口可连且 /api/config/status 校验过 → 端口上是 Agent Society 外部实例(owned=false);
+/// - 端口已关 → 不改相位,交给心跳的 Down 计数退出(用户要求:端口关闭 → 退出自己);
+/// - 端口可连但校验不过(被无关程序占用)→ Failed,保留重试/退出 UI。
 fn reevaluate_after_child_exit(
     app: &tauri::AppHandle,
     state: &LauncherState,
     logger: &FileLogger,
     st: ExitStatus,
-) -> bool {
+) {
     let port = state.port;
-    let reason: Option<String> = if !st.success() {
-        Some(format!(
-            "服务器启动失败,退出码 {}",
-            st.code()
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "unknown".into())
-        ))
-    } else if !readiness::tcp_probe(port, readiness::PROBE_TIMEOUT) {
-        Some("服务器进程立即退出(exit=0),端口未监听".to_string())
-    } else if !readiness::http_status_probe(port, readiness::PROBE_TIMEOUT) {
-        Some("端口被占用但无法确认是 Agent Society".to_string())
-    } else {
-        None
-    };
     let child_pid = state.child.lock().unwrap().as_ref().map(|c| c.id());
     if let Some(pid) = child_pid {
         remove_server_pid(app, pid);
     }
-    match reason {
-        Some(r) => {
-            logger.error("服务器启动失败", Some(&r));
-            set_phase(app, state, Phase::Failed(r));
-            windows::show_progress(app);
-            true
-        }
-        None => {
-            state.owned.store(false, Ordering::SeqCst);
-            set_phase(app, state, Phase::Ready);
-            windows::hide_progress(app);
-            windows::show_main(app);
-            logger.info(
-                "端口上已有 Agent Society 服务器(外部实例),本 GUI 退出时不会停止它",
-                Some(&format!("port={}", port)),
-            );
-            true
-        }
-    }
-}
 
-fn watch_child(app: tauri::AppHandle, logger: FileLogger) {
-    let state = app.state::<LauncherState>();
-    loop {
-        std::thread::sleep(Duration::from_secs(1));
-        if let Some(st) = try_wait_child(&state, &logger) {
-            if reevaluate_after_child_exit(&app, &state, &logger, st) {
-                return;
-            }
-        }
+    let port_open = readiness::tcp_probe(port, readiness::PROBE_TIMEOUT);
+    let verified = port_open && readiness::http_status_probe(port, readiness::PROBE_TIMEOUT);
+
+    if verified {
+        state.owned.store(false, Ordering::SeqCst);
+        set_phase(app, state, Phase::Ready);
+        windows::show_main(app);
+        logger.info(
+            "子进程已退出但端口上仍有 Agent Society(外部实例),本 GUI 退出时不会停止它",
+            Some(&format!(
+                "port={} child_exit={:?}",
+                port,
+                st.code()
+            )),
+        );
+    } else if port_open {
+        let reason = "端口被占用但无法确认是 Agent Society".to_string();
+        logger.error("服务器进程已退出且端口被无关程序占用", Some(&reason));
+        set_phase(app, state, Phase::Failed(reason));
+        windows::show_progress(app);
+    } else {
+        logger.warn(
+            "服务器子进程已退出,等待端口心跳确认关闭后退出",
+            Some(&format!("port={} child_exit={:?}", port, st.code())),
+        );
     }
 }
 

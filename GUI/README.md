@@ -52,6 +52,7 @@ cargo tauri build                # 产出 NSIS 安装包(dist/)
 | 托盘"退出" | 优雅停止服务器(≤60s)→ 退出;若服务器非本 GUI 启动(端口预占),不停止、直接退出 |
 | 重复启动 | 单实例:第二个实例立即退出,并唤起已有实例的主窗口 |
 | 启动失败 | 进度窗显示原因 + [重试] [退出];原因含服务器输出(launcher.log 有完整输出) |
+| 服务器运行中(心跳) | 就绪后每秒探一次 127.0.0.1:{port}:连接成功=存活;连接超时(服务器繁忙 backlog 满)=容忍;连续 3 次"连接被拒绝"=端口已关闭 → **启动器自动退出** |
 
 ## 维护者须知(踩过的坑,勿改)
 
@@ -62,6 +63,7 @@ cargo tauri build                # 产出 NSIS 安装包(dist/)
 5. 管道(stdout/stderr)必须持续排空,否则子进程写满 64KB 缓冲后阻塞。
 6. 托盘图标对象必须持有在状态里(TrayIcon drop 即消失);`image-png` feature 缺失时开发正常、打包后托盘图标不显示。
 7. 主窗口加载远程 URL(`http://localhost:{port}/web/`),不调用任何 Tauri IPC(Tauri 2.11 起远程源强制 ACL,天然隔离)。
+8. **心跳的"繁忙容错"判别**:实测 std 在 Windows 上对被拒连接报 `TimedOut` 而非 `ConnectionRefused`(阻塞 connect 也要 ~2s 才报真实错误)。因此三态探测在连接失败后用"能否 bind 该端口"二次判别:bind 成功 = 无监听者(Down);bind 失败 = 端口被占(Busy,容忍)。不要改回只靠 connect 错误类型判断。
 
 ## 已知权衡与限制
 

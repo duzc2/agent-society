@@ -1,7 +1,7 @@
 //! 服务器就绪探测:TCP connect + 可选 /api/config/status 校验(无第三方 HTTP 依赖)。
 
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::ExitStatus;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -12,8 +12,76 @@ pub const DEFAULT_TOTAL_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// 端口探测:127.0.0.1:{port} 可建立 TCP 连接即认为监听中。
 pub fn tcp_probe(port: u16, timeout: Duration) -> bool {
+    tcp_probe_detailed(port, timeout) == ProbeResult::Up
+}
+
+/// 心跳探测的三态结果:
+/// - Up:连接成功 → 服务器在监听;
+/// - Down:连接被拒绝(RST)→ 没有进程监听该端口,确定性的"服务器已关闭";
+/// - Busy:连接超时(SYN 无响应,监听 backlog 已满)等非拒绝类错误 →
+///   服务器可能繁忙,**不能**判定为关闭(用户要求:繁忙导致的超时必须容忍)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeResult {
+    Up,
+    Down,
+    Busy,
+}
+
+pub fn tcp_probe_detailed(port: u16, timeout: Duration) -> ProbeResult {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    TcpStream::connect_timeout(&addr, timeout).is_ok()
+    tcp_probe_detailed_at(addr, timeout)
+}
+
+/// 指定地址的三态探测(测试 Busy 分类需要非 loopback 地址)
+pub fn tcp_probe_detailed_at(addr: SocketAddr, timeout: Duration) -> ProbeResult {
+    match TcpStream::connect_timeout(&addr, timeout) {
+        Ok(_) => ProbeResult::Up,
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::ConnectionRefused {
+                return ProbeResult::Down;
+            }
+            // 超时等歧义错误:用"能否绑定该端口"二次判别。
+            // 背景:实测 std 在 Windows 上对被拒连接报 TimedOut 而非 ConnectionRefused
+            // (阻塞 connect 也要 ~2s 才报出真实错误),无法靠错误类型区分
+            // "无监听(Down)"与"backlog 满(繁忙)"。bind 判别瞬时且确定:
+            // - bind 成功 → 端口无监听者 → Down;
+            // - bind 失败(占用/TIME_WAIT)→ 端口被占 → Busy 容忍。
+            match TcpListener::bind(addr) {
+                Ok(_) => ProbeResult::Down,
+                Err(_) => ProbeResult::Busy,
+            }
+        }
+    }
+}
+
+/// 心跳状态:连续被拒计数。Up/Busy 都会重置计数。
+#[derive(Debug, Default)]
+pub struct HeartbeatState {
+    pub consecutive_down: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeartbeatAction {
+    Continue,
+    Exit,
+}
+
+/// 纯函数:心跳单步决策。连续 threshold 次 Down → Exit;Up/Busy 重置计数。
+pub fn heartbeat_step(state: &mut HeartbeatState, probe: ProbeResult, threshold: u32) -> HeartbeatAction {
+    match probe {
+        ProbeResult::Up | ProbeResult::Busy => {
+            state.consecutive_down = 0;
+            HeartbeatAction::Continue
+        }
+        ProbeResult::Down => {
+            state.consecutive_down += 1;
+            if state.consecutive_down >= threshold {
+                HeartbeatAction::Exit
+            } else {
+                HeartbeatAction::Continue
+            }
+        }
+    }
 }
 
 /// HTTP 校验:GET /api/config/status,状态行含 " 200 " 才通过。
@@ -139,6 +207,60 @@ mod tests {
         assert!(tcp_probe(port, PROBE_TIMEOUT), "监听中的端口应可连");
         drop(listener);
         assert!(!tcp_probe(port, PROBE_TIMEOUT), "已释放的端口应不可连");
+    }
+
+    #[test]
+    fn tcp_probe_detailed_three_way_classification() {
+        // Up:监听中
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert_eq!(tcp_probe_detailed(port, PROBE_TIMEOUT), ProbeResult::Up);
+        // Busy:backlog 打满的本地端口无法可靠模拟,用等价判别验证——
+        // 非本地黑洞地址 → connect 超时 → bind 非本地地址失败 → Busy(TEST-NET-1 保留地址)
+        let blackhole: SocketAddr = "192.0.2.1:1".parse().unwrap();
+        assert_eq!(
+            tcp_probe_detailed_at(blackhole, Duration::from_millis(300)),
+            ProbeResult::Busy,
+            "192.0.2.1 应归类为 Busy 而非 Down"
+        );
+        // Down:无监听者的空闲端口(connect 超时后 bind 成功)
+        let l2 = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let fresh_port = l2.local_addr().unwrap().port();
+        drop(l2);
+        assert_eq!(
+            tcp_probe_detailed(fresh_port, PROBE_TIMEOUT),
+            ProbeResult::Down
+        );
+    }
+
+    #[test]
+    fn heartbeat_step_down_threshold_and_reset() {
+        let mut st = HeartbeatState::default();
+        // 连续 2 次 Down → Continue
+        assert_eq!(heartbeat_step(&mut st, ProbeResult::Down, 3), HeartbeatAction::Continue);
+        assert_eq!(heartbeat_step(&mut st, ProbeResult::Down, 3), HeartbeatAction::Continue);
+        assert_eq!(st.consecutive_down, 2);
+        // Up 重置
+        assert_eq!(heartbeat_step(&mut st, ProbeResult::Up, 3), HeartbeatAction::Continue);
+        assert_eq!(st.consecutive_down, 0);
+        // Busy(繁忙)同样重置,不能计入关闭
+        assert_eq!(heartbeat_step(&mut st, ProbeResult::Down, 3), HeartbeatAction::Continue);
+        assert_eq!(heartbeat_step(&mut st, ProbeResult::Busy, 3), HeartbeatAction::Continue);
+        assert_eq!(st.consecutive_down, 0);
+        // 连续 3 次 Down → Exit
+        assert_eq!(heartbeat_step(&mut st, ProbeResult::Down, 3), HeartbeatAction::Continue);
+        assert_eq!(heartbeat_step(&mut st, ProbeResult::Down, 3), HeartbeatAction::Continue);
+        assert_eq!(heartbeat_step(&mut st, ProbeResult::Down, 3), HeartbeatAction::Exit);
+        assert_eq!(st.consecutive_down, 3);
+        // 混合序列:Down×2 + Busy + Down×3 → Exit(繁忙中间不累计)
+        let mut st2 = HeartbeatState::default();
+        assert_eq!(heartbeat_step(&mut st2, ProbeResult::Down, 3), HeartbeatAction::Continue);
+        assert_eq!(heartbeat_step(&mut st2, ProbeResult::Down, 3), HeartbeatAction::Continue);
+        assert_eq!(heartbeat_step(&mut st2, ProbeResult::Busy, 3), HeartbeatAction::Continue);
+        assert_eq!(st2.consecutive_down, 0);
+        assert_eq!(heartbeat_step(&mut st2, ProbeResult::Down, 3), HeartbeatAction::Continue);
+        assert_eq!(heartbeat_step(&mut st2, ProbeResult::Down, 3), HeartbeatAction::Continue);
+        assert_eq!(heartbeat_step(&mut st2, ProbeResult::Down, 3), HeartbeatAction::Exit);
     }
 
     fn spawn_http_responder(status_line: &'static str) -> u16 {
