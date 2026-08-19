@@ -4,12 +4,16 @@ use crate::logging::FileLogger;
 use tauri::Manager;
 
 /// 无边框 + 透明背景 + 置顶 + 不出现在任务栏的小窗口。
+/// 透明在 Windows 上依赖 vendor/tao 补丁:transparent 窗口创建时即带
+/// WS_EX_NOREDIRECTIONBITMAP(事后设置被系统静默忽略,上游 DWM blur-behind
+/// 回退在 Win11 上渲染白底)。shadow(false) 避免 DWM 边框扩展干扰合成。
 pub fn create_progress_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     tauri::WebviewWindowBuilder::new(app, "progress", tauri::WebviewUrl::App("progress.html".into()))
         .title("Agent Society 启动器")
         .inner_size(420.0, 160.0)
         .decorations(false)
         .transparent(true)
+        .shadow(false)
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(false)
@@ -51,6 +55,7 @@ pub fn create_monitor_window(app: &tauri::AppHandle) -> tauri::Result<tauri::Web
             .inner_size(300.0, 112.0)
             .decorations(false)
             .transparent(true)
+            .shadow(false)
             .always_on_top(true)
             .skip_taskbar(true)
             .resizable(false)

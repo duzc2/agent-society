@@ -68,6 +68,7 @@ cargo tauri build                # 产出 NSIS 安装包(dist/)
 9. **监视数据来源 = 心跳消息队列,不是 REST 端点**。智能体计数来自 `POST /api/heartbeat`(body `{"lastMessageId":N}`)响应中的 `org_tree` 消息(服务器 HeartbeatBroker,无客户端状态):客户端记住最大 messageId 增量拉取,`needRefresh=true` 时归零重取(服务器重启序列号重置)。计数口径:`total` = 组织树中 `status != "deleted"` 的节点(含 root/user);`working` = `computeStatus ∈ {processing, waiting_llm}`(stopping/stopped/terminating 是消亡过渡态不计入)。
 10. **心跳响应的实体是 chunked 编码**:实测 Hono/Node 对大 JSON 响应给 `Transfer-Encoding: chunked`(无 Content-Length),读体前必须按 chunked 解码(monitor.rs 的 `decode_http_body` 已处理 chunked / Content-Length / 无定界三种)。不要假定 read_to_end 拿到的是裸 JSON。
 11. **监视窗口 2s 轮询与退出判定的 1s 心跳是两条独立线程**:HTTP 失败只降级为"保留上次数据"(繁忙容忍),绝不触发退出判定;退出只由三态 TCP 探测的连续 Down 计数决定。修改时不要把两者合并。
+12. **Windows 透明窗口必须手工补 `WS_EX_NOREDIRECTIONBITMAP`**:Tauri 2(tao 0.35)从不给 tao 传 no_redirection_bitmap,透明窗口走旧式 `DwmEnableBlurBehindWindow` 空区域 hack(tao window.rs:1284),在 Win11(26200)上渲染成**白底**。windows.rs 的 `enable_per_pixel_alpha` 在窗口创建后设置该位。**关键**:tao 的 `apply_diff` 在样式变化(每次 show/hide)时会用 `to_window_styles()` 整体重写 exstyle(window_state.rs:426-441),该位会被清掉——因此 show/hide 必须走 windows.rs 的 `show_transparent`/`hide_transparent`(show/hide 后重设),不要直接调 `w.show()`/`w.hide()`。时序上 build() 返回时 webview 尚未创建,同步设置的位会先于 WebView2 控制器创建生效。
 
 ## 已知权衡与限制
 

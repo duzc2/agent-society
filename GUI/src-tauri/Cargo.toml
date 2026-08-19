@@ -28,3 +28,9 @@ windows-sys = { version = "=0.61.2", features = [
   "Win32_System_Threading",     # CreateProcessW/STARTUPINFOW/PROCESS_INFORMATION/GetExitCodeProcess/TerminateProcess/STILL_ACTIVE
   "Win32_UI_WindowsAndMessaging" # SW_HIDE(隐藏控制台窗口)
 ] }
+
+# vendor tao 补丁:transparent 窗口创建时即带 WS_EX_NOREDIRECTIONBITMAP
+# (事后设置被 Windows 静默忽略;DWM blur-behind 回退在 Win11 上渲染白底)。
+# 详见 vendor/tao/src/platform_impl/windows/window.rs 的 PATCH 注释。
+[patch.crates-io]
+tao = { path = "vendor/tao" }
