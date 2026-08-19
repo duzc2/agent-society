@@ -21,8 +21,6 @@ pub const DEFAULT_SKIN: &str = "classic";
 pub const SKIN_VERSION: u64 = 1;
 pub const MIN_SIZE: f64 = 5.0;
 pub const MAX_SIZE: f64 = 2000.0;
-pub const PREVIEW_WIDTH: u32 = 240;
-pub const PREVIEW_HEIGHT: u32 = 160;
 
 /// 皮肤来源:官方(git 管理)或用户自定义(gitignore)
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -36,14 +34,6 @@ impl SkinSource {
         match self {
             SkinSource::Official => "official",
             SkinSource::User => "user",
-        }
-    }
-
-    /// 设置界面来源角标文案
-    pub fn label(self) -> &'static str {
-        match self {
-            SkinSource::Official => "官方",
-            SkinSource::User => "自定义",
         }
     }
 }
