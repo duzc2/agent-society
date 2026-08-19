@@ -236,12 +236,14 @@ node GUI/scripts/skin-tool.mjs --help
 ## 9. 打包与发布
 
 - 官方皮肤(`GUI/skins/`)必须 **git 跟踪**(`git ls-files` 能看到)才会被 `scripts/win/build_exe.ps1` 复制进发布包;未跟踪文件永不打包。发布布局:`<安装目录>/GUI/skins/<folder>/`。
+- 启动器安装包(`cargo tauri build` 的 NSIS 产物)经 `tauri.conf.json` 的 `bundle.resources` map(`"../skins": "GUI/skins"`)携带官方皮肤,安装布局同为 `<安装目录>/GUI/skins/<folder>/`;注意该方式按目录**整体复制**(含未跟踪文件),与 build_exe.ps1 的 git 跟踪过滤不同。
 - `GUI/skins-user/` 被 .gitignore 排除,**不随包发布**;但发布版运行时会动态发现安装目录旁的 `GUI/skins-user/`——用户把皮肤文件夹放进去即可在设置界面看到,无需改官方皮肤。
-- 开发布局:启动器从 `GUI/src-tauri/target/debug` 向上找 GUI 项目根(`src-tauri/tauri.conf.json` 标记),使用 `GUI/skins/` 与 `GUI/skins-user/`。
+- 开发布局:启动器从 `GUI/src-tauri/target/debug` 向上找 GUI 项目根(`src-tauri/tauri.conf.json` 标记),使用 `GUI/skins/` 与 `GUI/skins-user/`。dev 下**优先取 GUI 项目根的活文件**——tauri-build 每次构建都会把 resources 复制到 `target/debug/GUI/skins`,该副本仅供发行布局回退,不改皮肤不重新构建也生效。
 
 ## 10. 资源与 MIME
 
 - 皮肤页通过 `skin://` 协议加载(如 `skin://localhost/official/classic/index.html`),同目录相对引用自动可用;**只允许相对路径**。
+- 设置页预览图是页面内**子资源**请求:Windows/WebView2 上 wry 只拦截 `http://skin.*` 形式的请求(导航 URL 才会被自动改写),所以预览图必须用 `http://skin.localhost/<source>/<folder>/preview.png`(拦截后 revert 回 `skin://` 交给同一 handler)。
 - 支持的 MIME(按扩展名):html/htm、css、js/mjs、json、txt、svg、png、jpg/jpeg、gif、webp、ico、woff/woff2、ttf、mp3、wav;其他按 `application/octet-stream`。
 - 皮肤文件不得被 symlink 指到皮肤目录之外(协议层会拒绝)。
 - 皮肤内不要写死 `skin://` / `tauri://` URL(校验器会拒绝);远程 http(s) 资源允许但不建议(离线不可用)。

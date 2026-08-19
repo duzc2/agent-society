@@ -31,9 +31,18 @@ async function loadSkins() {
     imgWrap.className = "preview-wrap";
     if (skin.preview_ok) {
       const img = document.createElement("img");
-      img.src = "skin://localhost/" + skin.source + "/" + skin.folder + "/preview.png";
+      // Windows/WebView2: 自定义协议的子资源请求不会被 wry 自动改写为 workaround 形式,
+      // 必须直接用 http://skin.localhost/...(wry 拦截后 revert 回 skin://localhost/... 交给 serve_skin_request)。
+      img.src = "http://skin.localhost/" + skin.source + "/" + skin.folder + "/preview.png";
       img.alt = skin.name;
       img.draggable = false;
+      img.onerror = () => {
+        console.error("皮肤预览图加载失败:", img.src);
+        const ph = document.createElement("div");
+        ph.className = "preview-placeholder";
+        ph.textContent = "预览无效";
+        imgWrap.replaceChild(ph, img);
+      };
       imgWrap.appendChild(img);
     } else {
       const ph = document.createElement("div");

@@ -23,6 +23,7 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/node"],
+    "resources": { "../skins": "GUI/skins" },
     "shortDescription": "Agent Society 服务器引导启动器",
     "longDescription": "后台启动 Agent Society 服务器:托盘常驻、优雅关闭、无终端窗口。"
   }

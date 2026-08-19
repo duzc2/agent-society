@@ -114,7 +114,7 @@ fn try_wait_child(state: &LauncherState, logger: &FileLogger) -> Option<ExitStat
 pub fn run() {
     let debug_skin = skin::parse_debug_args(std::env::args());
     skin::set_debug(debug_skin.is_some());
-    let skin_roots = skin::SkinRoots::resolve(&current_exe_dir());
+    let skin_roots = skin::SkinRoots::resolve(&current_exe_dir(), tauri::is_dev());
     let roots_for_setup = skin_roots.clone();
 
     let mut builder = tauri::Builder::default();

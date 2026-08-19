@@ -46,10 +46,11 @@ pub struct SkinRoots {
 }
 
 impl SkinRoots {
-    pub fn resolve(exe_dir: &Path) -> SkinRoots {
+    /// is_dev 决定两种布局的优先级(见 resolve_skin_root)。
+    pub fn resolve(exe_dir: &Path, is_dev: bool) -> SkinRoots {
         SkinRoots {
-            official: resolve_skin_root(exe_dir, SkinSource::Official),
-            user: resolve_skin_root(exe_dir, SkinSource::User),
+            official: resolve_skin_root(exe_dir, SkinSource::Official, is_dev),
+            user: resolve_skin_root(exe_dir, SkinSource::User, is_dev),
         }
     }
 
@@ -279,20 +280,25 @@ pub fn load_skin_dir(dir: &Path) -> Result<(SkinConfig, Vec<String>), String> {
     Ok((cfg, warnings))
 }
 
-/// 定位单个来源的 skins 根:发行布局 `<exe>/GUI/skins[-user]` 优先,
-/// 否则开发布局 `find_gui_root(exe_dir)/skins[-user]`。
-pub fn resolve_skin_root(exe_dir: &Path, source: SkinSource) -> Option<PathBuf> {
+/// 定位单个来源的 skins 根。两种布局:
+/// 发行 `<exe>/GUI/skins[-user]`(tauri resources 经构建脚本复制到 exe 旁),开发 `find_gui_root(exe_dir)/skins[-user]`。
+/// dev 下必须先查开发布局:tauri-build 每次构建(含 dev)都会把 resources 复制到 `target/debug/GUI/skins`,
+/// 发行布局优先会命中这个构建期副本,导致改皮肤文件不重新构建不生效。发行模式下保持发行布局优先。
+pub fn resolve_skin_root(exe_dir: &Path, source: SkinSource, is_dev: bool) -> Option<PathBuf> {
     let folder = match source {
         SkinSource::Official => "skins",
         SkinSource::User => "skins-user",
     };
     let release = exe_dir.join("GUI").join(folder);
-    if release.is_dir() {
-        return Some(release);
-    }
-    crate::config_resolver::find_gui_root(exe_dir, crate::config_resolver::DEFAULT_MAX_DEPTH)
+    let release = release.is_dir().then_some(release);
+    let dev = crate::config_resolver::find_gui_root(exe_dir, crate::config_resolver::DEFAULT_MAX_DEPTH)
         .map(|gui_root| gui_root.join(folder))
-        .filter(|p| p.is_dir())
+        .filter(|p| p.is_dir());
+    if is_dev {
+        dev.or(release)
+    } else {
+        release.or(dev)
+    }
 }
 
 /// 皮肤入口 URL。host 必须为 localhost(wry 导航时改写为 http://skin.localhost/...,
@@ -902,7 +908,11 @@ mod tests {
         let exe_release = root.join("dist").join("win-unpacked");
         fs::create_dir_all(exe_release.join("GUI").join("skins")).unwrap();
         fs::create_dir_all(exe_release.join("GUI").join("skins-user")).unwrap();
-        assert!(resolve_skin_root(&exe_release, SkinSource::Official).unwrap().ends_with("GUI/skins"));
+        assert!(
+            resolve_skin_root(&exe_release, SkinSource::Official, false)
+                .unwrap()
+                .ends_with("GUI/skins")
+        );
         // 开发布局:gui_root 标记 + skins
         let gui = root.join("GUI");
         fs::create_dir_all(gui.join("src-tauri")).unwrap();
@@ -910,9 +920,24 @@ mod tests {
         fs::create_dir_all(gui.join("skins")).unwrap();
         let exe_dev = gui.join("src-tauri").join("target").join("debug");
         fs::create_dir_all(&exe_dev).unwrap();
-        assert!(resolve_skin_root(&exe_dev, SkinSource::Official).unwrap().ends_with("GUI/skins"));
+        assert!(
+            resolve_skin_root(&exe_dev, SkinSource::Official, true)
+                .unwrap()
+                .ends_with("GUI/skins")
+        );
         // 无 skins-user 目录 → None
-        assert_eq!(resolve_skin_root(&exe_dev, SkinSource::User), None);
+        assert_eq!(resolve_skin_root(&exe_dev, SkinSource::User, true), None);
+        // dev 下构建期副本(target/debug/GUI/skins,tauri-build 每次构建复制)存在时,
+        // 仍优先取 GUI 项目根的活文件;发行模式下同一布局应命中发行副本
+        fs::create_dir_all(exe_dev.join("GUI").join("skins")).unwrap();
+        assert_eq!(
+            resolve_skin_root(&exe_dev, SkinSource::Official, true).unwrap(),
+            gui.join("skins")
+        );
+        assert_eq!(
+            resolve_skin_root(&exe_dev, SkinSource::Official, false).unwrap(),
+            exe_dev.join("GUI").join("skins")
+        );
     }
 
     #[test]
