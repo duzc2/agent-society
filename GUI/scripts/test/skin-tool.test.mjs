@@ -179,6 +179,67 @@ test("未知字段仅警告", () => {
   assert.ok(res.warnings.some((w) => w.includes("fancy")), res.warnings.join("; "));
 });
 
+test("hitRegion 合法(椭圆/路径)", () => {
+  const roots = tempRoots();
+  makeSkin(roots, "official", "s1", {
+    json: JSON.stringify({
+      name: "x", version: 1, width: 200, height: 200,
+      hitRegion: { shape: "ellipse", cx: 100, cy: 100, rx: 88, ry: 88 },
+    }),
+  });
+  const res1 = validateSkin(roots, "s1");
+  assert.equal(res1.ok, true, res1.errors.join("; "));
+  assert.equal(res1.warnings.length, 0);
+  makeSkin(roots, "official", "s2", {
+    json: JSON.stringify({
+      name: "x", version: 1, width: 200, height: 200,
+      hitRegion: { shape: "path", d: "M 0 0 H 200 V 200 H 0 Z" },
+    }),
+  });
+  assert.equal(validateSkin(roots, "s2").ok, true);
+});
+
+test("hitRegion 各非法分支", () => {
+  const cases = [
+    [5, "hitRegion 必须是对象"],
+    [{}, "hitRegion.shape"],
+    [{ shape: "rect" }, "hitRegion.shape"],
+    [{ shape: "ellipse" }, "hitRegion.ellipse"],
+    [{ shape: "ellipse", cx: 1, cy: 1, rx: 1 }, "hitRegion.ellipse"],
+    [{ shape: "ellipse", cx: "a", cy: 1, rx: 1, ry: 1 }, "hitRegion.ellipse"],
+    [{ shape: "ellipse", cx: 1, cy: 1, rx: -1, ry: 1 }, "必须为正数"],
+    [{ shape: "ellipse", cx: 1, cy: 1, rx: 0, ry: 1 }, "必须为正数"],
+    [{ shape: "path" }, "hitRegion.path"],
+    [{ shape: "path", d: "" }, "hitRegion.path"],
+    [{ shape: "path", d: "M 0 0 X 1" }, "非法字符"],
+  ];
+  for (const [hr, needle] of cases) {
+    const roots = tempRoots();
+    makeSkin(roots, "official", "s1", {
+      json: JSON.stringify({ name: "x", version: 1, width: 200, height: 200, hitRegion: hr }),
+    });
+    const res = validateSkin(roots, "s1");
+    assert.equal(res.ok, false, JSON.stringify(hr));
+    assert.ok(
+      res.errors.some((e) => e.includes(needle)),
+      `${JSON.stringify(hr)} 应提及 ${needle}: ${res.errors.join("; ")}`,
+    );
+  }
+});
+
+test("hitRegion 未知子字段仅警告", () => {
+  const roots = tempRoots();
+  makeSkin(roots, "official", "s1", {
+    json: JSON.stringify({
+      name: "x", version: 1, width: 200, height: 200,
+      hitRegion: { shape: "ellipse", cx: 1, cy: 1, rx: 1, ry: 1, extra: true },
+    }),
+  });
+  const res = validateSkin(roots, "s1");
+  assert.equal(res.ok, true);
+  assert.ok(res.warnings.some((w) => w.includes("extra")), res.warnings.join("; "));
+});
+
 test("皮肤目录不存在 / skin.json 缺失或损坏 / 顶层非对象", () => {
   const roots = tempRoots();
   assert.equal(validateSkin(roots, "ghost").ok, false);
@@ -322,31 +383,83 @@ test("main check 合法/非法退出码", () => {
   assert.ok(badOut.lines.some(([t, s]) => t === "err" && s.includes("皮肤不存在")));
 });
 
-test("main debug:无 exe → 1 + 构建指引;有 exe → spawn 参数正确", () => {
+test("main debug:缺 exe 自动构建后启动;构建失败/spawn 异常 → 1;有 exe 直接启动", () => {
   const roots = tempRoots();
   makeSkin(roots, "official", "good");
-  const out1 = captureOut();
-  assert.equal(main(["debug", "good"], { roots, exeResolver: () => null, out: out1 }), 1);
-  assert.ok(out1.lines.some(([t, s]) => t === "err" && s.includes("cargo build")));
+
+  // exe 缺失 → 自动 cargo build → 构建成功 → 用新探测到的 exe 启动
   const spawned = [];
-  const out2 = captureOut();
+  const built = [];
+  let probe = 0;
+  assert.equal(
+    main(["debug", "good"], {
+      roots,
+      exeResolver: () => (++probe === 1 ? null : "fake.exe"),
+      builder: (cmd, args) => { built.push({ cmd, args }); return { status: 0 }; },
+      spawner: (cmd, args) => spawned.push({ cmd, args }),
+      out: captureOut(),
+    }),
+    0,
+  );
+  assert.deepEqual(built, [{ cmd: "cargo", args: ["build"] }]);
+  assert.deepEqual(spawned, [{ cmd: "fake.exe", args: ["--skin-debug", "good"] }]);
+
+  // 构建失败 → 1 + 构建指引
+  const outFail = captureOut();
+  assert.equal(
+    main(["debug", "good"], {
+      roots,
+      exeResolver: () => null,
+      builder: () => ({ status: 1 }),
+      spawner: () => { throw new Error("不应启动"); },
+      out: outFail,
+    }),
+    1,
+  );
+  assert.ok(outFail.lines.some(([t, s]) => t === "err" && s.includes("cargo build")));
+
+  // exe 存在 → 直接启动,不构建
+  const spawned2 = [];
+  const built2 = [];
   assert.equal(
     main(["debug", "good"], {
       roots,
       exeResolver: () => "fake.exe",
-      spawner: (cmd, args) => spawned.push({ cmd, args }),
-      out: out2,
+      builder: () => { built2.push(1); return { status: 0 }; },
+      spawner: (cmd, args) => spawned2.push({ cmd, args }),
+      out: captureOut(),
     }),
     0,
   );
-  assert.deepEqual(spawned, [{ cmd: "fake.exe", args: ["--skin-debug", "good"] }]);
-  // 校验不过 → 不 spawn
-  const spawned2 = [];
+  assert.equal(built2.length, 0);
+  assert.deepEqual(spawned2, [{ cmd: "fake.exe", args: ["--skin-debug", "good"] }]);
+
+  // spawn 抛异常(如 ENOENT)→ 1,不崩
   assert.equal(
-    main(["debug", "ghost"], { roots, exeResolver: () => "fake.exe", spawner: () => spawned2.push(1), out: captureOut() }),
+    main(["debug", "good"], {
+      roots,
+      exeResolver: () => "fake.exe",
+      spawner: () => { throw new Error("ENOENT"); },
+      out: captureOut(),
+    }),
     1,
   );
-  assert.equal(spawned2.length, 0);
+
+  // 校验不过 → 不构建不启动
+  const spawned3 = [];
+  const built3 = [];
+  assert.equal(
+    main(["debug", "ghost"], {
+      roots,
+      exeResolver: () => "fake.exe",
+      builder: () => { built3.push(1); return { status: 0 }; },
+      spawner: () => spawned3.push(1),
+      out: captureOut(),
+    }),
+    1,
+  );
+  assert.equal(built3.length, 0);
+  assert.equal(spawned3.length, 0);
 });
 
 test("main 参数错误与 help", () => {

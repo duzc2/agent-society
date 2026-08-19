@@ -90,9 +90,13 @@ pub fn create_monitor_window(
     } else {
         logger.warn("无法获取主显示器,监视窗口使用系统默认位置", None);
     }
-    let inject = if debug { skin::DEBUG_SCRIPT } else { skin::CONTEXTMENU_SCRIPT };
+    let inject = if debug {
+        skin::debug_script(&cfg.hit_region)
+    } else {
+        skin::production_script()
+    };
     let builder = builder.on_page_load(move |window, _payload| {
-        if let Err(e) = window.eval(inject) {
+        if let Err(e) = window.eval(inject.as_str()) {
             let logger = window.app_handle().state::<FileLogger>().inner().clone();
             logger.error(
                 &format!("监视窗口注入脚本失败: {}", e),
@@ -102,7 +106,11 @@ pub fn create_monitor_window(
         // 皮肤页在页面加载后才注册监听,补发最近一次数据避免丢首帧
         crate::push_last_monitor_payload(window.app_handle());
     });
-    builder.build()
+    let window = builder.build()?;
+    // 命中区域子类化:区域外点击穿透(整窗区域时 apply 内部直接跳过)
+    #[cfg(windows)]
+    crate::hit_test::apply(app, &window, &cfg.hit_region);
+    Ok(window)
 }
 
 pub fn show_monitor(app: &tauri::AppHandle) {

@@ -1,8 +1,15 @@
 {
   "name": "环形仪表",
   "version": 1,
-  "width": 240,
-  "height": 240,
+  "width": 200,
+  "height": 200,
+  "hitRegion": {
+    "shape": "ellipse",
+    "cx": 100,
+    "cy": 100,
+    "rx": 88,
+    "ry": 88
+  },
   "transparency": true,
   "alwaysOnTop": true,
   "shadow": false,

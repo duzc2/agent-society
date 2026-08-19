@@ -8,7 +8,7 @@
 use crate::logging::FileLogger;
 use crate::windows;
 use tauri::image::Image;
-use tauri::menu::{Menu, MenuEvent, MenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::Manager;
 
@@ -32,11 +32,20 @@ pub fn handle_menu_event(app: &tauri::AppHandle, event: MenuEvent) {
     }
 }
 
-/// 调试模式菜单:单条"退出调试"(调试模式无托盘,popup 点击由
-/// run() 里 Builder::on_menu_event 注册的全局监听器分发)。
+/// 调试模式菜单:"显示命中区域"勾选项(控制覆盖层显示/隐藏)+ "退出调试"
+/// (调试模式无托盘,popup 点击由 run() 里 Builder::on_menu_event 注册的全局监听器分发;
+/// 勾选态每次弹出时按当前状态重建)。
 pub fn build_debug_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let overlay_item = CheckMenuItem::with_id(
+        app,
+        "debug_toggle_hit_overlay",
+        "显示命中区域",
+        true,
+        crate::skin::hit_overlay_visible(),
+        None::<&str>,
+    )?;
     let quit_item = MenuItem::with_id(app, "debug_quit", "退出调试", true, None::<&str>)?;
-    Menu::with_items(app, &[&quit_item])
+    Menu::with_items(app, &[&overlay_item, &quit_item])
 }
 
 pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<tauri::tray::TrayIcon> {

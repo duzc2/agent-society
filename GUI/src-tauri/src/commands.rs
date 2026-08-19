@@ -70,6 +70,14 @@ pub fn launcher_exit(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 监视窗拖拽兜底:命中区域内皮肤未处理的左键按下 → 移动悬浮窗。
+/// 由注入脚本在页面层判断"皮肤未处理"(不在 data-tauri-drag-region 内、未
+/// preventDefault)后调用;页面只会在命中区域内收到鼠标事件,兜底天然限于触发区域。
+#[tauri::command]
+pub fn monitor_start_drag(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.start_dragging().map_err(|e| e.to_string())
+}
+
 /// 调试模式右键:弹出单条目菜单("退出调试")。结构与 monitor_context_menu 相同:
 /// async(防主线程死锁)+ 点击坐标定位 + POPUP_ACTIVE 重入守卫。
 /// 菜单点击由 run() 里注册的全局 on_menu_event 分发(无托盘,popup 事件仍走全局监听器)。

@@ -54,6 +54,7 @@ classic/
 | `version` | integer | 是 | 必须为 `1` | — |
 | `width` | number | 是 | `5` ~ `2000`(逻辑像素) | — |
 | `height` | number | 是 | `5` ~ `2000`(逻辑像素) | — |
+| `hitRegion` | object | 否 | 鼠标命中区域(见 3.1);缺省 = 整窗 | 整窗 |
 | `transparency` | boolean | 否 | 窗口背景透明(Windows 上决定窗口是否带 WS_EX_NOREDIRECTIONBITMAP) | `true` |
 | `alwaysOnTop` | boolean | 否 | 置顶 | `true` |
 | `shadow` | boolean | 否 | 系统窗口阴影(透明窗口建议 `false`) | `false` |
@@ -66,6 +67,31 @@ classic/
 - `version` 为将来 schema 演进预留,现在只接受 `1`;
 - 窗口位置不由皮肤配置:监视窗固定停靠主显示器工作区右上角(边距 12 逻辑像素,按皮肤宽度计算);
 - 解析失败的皮肤在启动时回退内置 classic 页面,错误写入 `GUI/logs/launcher.log`。
+
+### 3.1 命中区域 hitRegion(可选)
+
+透明窗口的**整个矩形**(含看不见的部分)默认都会拦截鼠标。`hitRegion` 把"窗口响应点击/拖拽的区域"缩小到内容形状:**区域外的点击直接穿透到下层软件**,区域内行为(拖拽、右键菜单)不变。
+
+- 坐标单位 = 窗口逻辑像素,原点左上角(与 `width`/`height` 同一坐标系);
+- **区域内拖拽**:鼠标事件只会到达命中区域内的页面。建议皮肤把可拖拽容器标 `data-tauri-drag-region="deep"`(子树任意后代按下左键都拖拽;**裸属性只对元素自身生效**,点在文字/图形等子元素上不会拖——三款官方皮肤均已用 `deep`)。皮肤没有任何标记时,启动器兜底为**拖拽移动悬浮窗**;可交互元素(A/BUTTON/INPUT/SELECT/TEXTAREA/LABEL/SUMMARY、可交互 role)、`data-tauri-drag-region="false"` 的显式禁用、以及皮肤对 `mousedown` 调 `preventDefault`,兜底都会让位;
+- 两种形状:
+  - `ellipse`:椭圆(圆形取 `rx == ry`);
+  - `path`:SVG path `d` 子集(`M m L l H h V v Z z C c Q q A a`),按偶奇填充规则判定(嵌套子路径自动成孔);
+- 非法配置按 skin.json 错误处理(响亮失败,不静默回退整窗);
+- debug 模式下启动器会叠加半透明红色覆盖层显示实际命中区域(仅调试窗口可见);缺省时显示整窗虚线框。
+
+```jsonc
+// 圆形(环形仪表窗口 200x200,圆环外缘约 80,留少量边距):
+"hitRegion": { "shape": "ellipse", "cx": 100, "cy": 100, "rx": 88, "ry": 88 }
+
+// 圆角矩形(300x112 卡片,圆角半径 16):
+"hitRegion": { "shape": "path", "d": "M 20 4 H 280 Q 296 4 296 20 V 92 Q 296 108 280 108 H 20 Q 4 108 4 92 V 20 Q 4 4 20 4 Z" }
+
+// 挖孔圆环(外圆 + 内圆,偶奇规则自动成孔):
+"hitRegion": { "shape": "path", "d": "M 100 0 A 100 100 0 1 1 100 200 A 100 100 0 1 1 100 0 Z M 100 50 A 50 50 0 1 0 100 150 A 50 50 0 1 0 100 50 Z" }
+```
+
+提示:窗口尺寸应尽量贴合内容(透明边也会吞点击——命中区域外、窗口矩形内的部分仍拦截鼠标;只有 `hitRegion` 外才穿透)。为此宁可多写一条 path,也不要留大面积透明窗口。
 
 ## 4. 数据契约:dateUpdate 事件
 
@@ -131,7 +157,7 @@ window.addEventListener("dateUpdate", (event) => {
   </style>
 </head>
 <body>
-  <div data-tauri-drag-region>
+  <div data-tauri-drag-region="deep">
     <span class="label">智能体</span> <span id="total" class="num">--</span>
     &nbsp;&nbsp;
     <span class="label">工作中</span> <span id="working" class="num">--</span>
@@ -161,7 +187,7 @@ window.addEventListener("dateUpdate", (event) => {
 |---|---|---|---|
 | 经典卡片 | `official:classic` | 300x112 | 深色圆角卡片 + 状态点四色 + 双计数 + 更新时间;迁移旧版设计的模板 |
 | 极简数字 | `official:minimal` | 240x88 | 无卡片、纯文字大字数字、完全透明背景、自定义排版 |
-| 环形仪表 | `official:gauge` | 240x240 | SVG 渐变圆环 + stroke-dasharray 比例动画 + 中心数字 |
+| 环形仪表 | `official:gauge` | 200x200 | SVG 渐变圆环 + stroke-dasharray 比例动画 + 中心数字;命中区域为椭圆(圆环外四角点击穿透) |
 
 每个皮肤都遵循第 2–4 节全部规则,是开发新皮肤的参考实现。
 
@@ -188,8 +214,10 @@ node GUI/scripts/skin-tool.mjs --help
 
 **debug 调试模式**:
 
-- 校验不过不启动;通过后启动 GUI 启动器的皮肤调试模式(`--skin-debug <key>`);
+- 校验不过不启动;通过后**自动启动** GUI 启动器的皮肤调试模式(`--skin-debug <key>`),全程无需人工拉起 launcher;
+- exe 不存在时自动先执行 `cargo build`(src-tauri)再启动,构建失败才报错退出;
 - 只打开皮肤悬浮窗(**真实 WebView2 窗口**:透明/置顶/无边框/尺寸全部与生产一致);
+- 命中区域以半透明红色覆盖层显示(定义了 `hitRegion` 时;缺省显示整窗虚线框),用于核对"哪些点击会穿透";右键菜单"**显示命中区域**"勾选项可随时显示/隐藏覆盖层(初始显示);
 - 假数据:初始 `{total: 42, working: 17, server: "up"}`,之后每 10 秒随机(total 10..99、working ≤ total、server 在 up/busy/down 轮换);
 - 不启动服务器/托盘/单实例插件——可与运行中的生产实例并存;
 - 退出:悬浮窗上右键 → "退出调试" / 按 Esc(先点一下窗口获得焦点)/ 关闭窗口;
@@ -236,9 +264,9 @@ node GUI/scripts/skin-tool.mjs --help
 生成一个合法皮肤,依次满足:
 
 1. 文件夹名匹配 `^[A-Za-z0-9_-]{1,64}$`,放 `GUI/skins/`(官方)或 `GUI/skins-user/`(自定义);
-2. `skin.json`:顶层对象;`name` 非空 ≤64 字符;`version` 恰为整数 `1`;`width`/`height` 为 `5..2000` 的数字;布尔字段缺省即默认,写了必须是 true/false;不要发明新字段(会被警告);
+2. `skin.json`:顶层对象;`name` 非空 ≤64 字符;`version` 恰为整数 `1`;`width`/`height` 为 `5..2000` 的数字;布尔字段缺省即默认,写了必须是 true/false;命中区域可选 `hitRegion`(见 3.1,窗口大内容小时建议定义);不要发明新字段(会被警告);
 3. `index.html`:UTF-8 + `lang="zh-CN"`;CSS 里 `html, body { background: transparent; margin: 0; overflow: hidden; user-select: none; }`;
-4. 脚本在解析期注册 `window.addEventListener("dateUpdate", ...)`,不做任何 `__TAURI__` 调用;
+4. 脚本在解析期注册 `window.addEventListener("dateUpdate", ...)`,不做任何 `__TAURI__` 调用;窗口拖拽:拖拽容器标 `data-tauri-drag-region="deep"`(裸属性只对元素自身生效),或完全不管(启动器在命中区域内兜底拖拽,见 3.1);
 5. 渲染 `total`/`working` 前做 `typeof === "number"` 守卫;`server` 四态(up/busy/down/stopping)都有视觉;
 6. 全部资源用相对路径(`./` 或直接文件名),无 `/` 开头、无 `..` 逃逸、无 `skin://`/`tauri://` 字面量;
 7. `preview.png` 恰好 240x160;

@@ -10,6 +10,7 @@
 //! - 数据契约:皮肤页监听 window 上的 CustomEvent "dateUpdate"(detail 携带数据),不依赖 Tauri API;
 //!   右键菜单由启动器在 on_page_load 时统一注入(见 CONTEXTMENU_SCRIPT / DEBUG_SCRIPT)。
 
+use crate::hit_region::HitRegion;
 use serde::Serialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -136,6 +137,8 @@ pub struct SkinConfig {
     pub name: String,
     pub width: f64,
     pub height: f64,
+    /// 鼠标命中区域(触发范围):缺省整窗;定义后区域外点击穿透到下层窗口
+    pub hit_region: HitRegion,
     pub transparency: bool,
     pub always_on_top: bool,
     pub shadow: bool,
@@ -150,6 +153,7 @@ impl Default for SkinConfig {
             name: "经典卡片(内嵌回退)".to_string(),
             width: 300.0,
             height: 112.0,
+            hit_region: HitRegion::Full,
             transparency: true,
             always_on_top: true,
             shadow: false,
@@ -183,6 +187,7 @@ pub fn parse_skin_config(json: &str) -> Result<(SkinConfig, Vec<String>), String
         "version",
         "width",
         "height",
+        "hitRegion",
         "transparency",
         "alwaysOnTop",
         "shadow",
@@ -218,6 +223,8 @@ pub fn parse_skin_config(json: &str) -> Result<(SkinConfig, Vec<String>), String
 
     let width = parse_dimension(&v, "width")?;
     let height = parse_dimension(&v, "height")?;
+    let (hit_region, region_warnings) = HitRegion::parse(v.get("hitRegion"))?;
+    warnings.extend(region_warnings);
 
     let bool_field = |key: &str, default: bool| -> Result<bool, String> {
         match v.get(key) {
@@ -237,6 +244,7 @@ pub fn parse_skin_config(json: &str) -> Result<(SkinConfig, Vec<String>), String
             name: name.to_string(),
             width,
             height,
+            hit_region,
             transparency,
             always_on_top,
             shadow,
@@ -499,6 +507,21 @@ pub fn is_debug() -> bool {
     DEBUG_MODE.load(Ordering::SeqCst)
 }
 
+/// 调试命中区域覆盖层的显示状态(初始可见;右键菜单开关,仅调试模式有意义)。
+static HIT_OVERLAY_VISIBLE: AtomicBool = AtomicBool::new(true);
+
+pub fn hit_overlay_visible() -> bool {
+    HIT_OVERLAY_VISIBLE.load(Ordering::SeqCst)
+}
+
+/// 切换覆盖层显示,返回切换后的新状态。
+pub fn toggle_hit_overlay() -> bool {
+    let prev = HIT_OVERLAY_VISIBLE
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| Some(!v))
+        .expect("fetch_update 闭包恒返回 Some,不会失败");
+    !prev
+}
+
 /// 生产模式注入:监视窗口每个页面(皮肤与内嵌回退页)统一获得右键菜单
 /// (页面 preventDefault 抑制 WebView2 默认菜单;invoke 失败静默——Rust 侧已记日志)。
 pub const CONTEXTMENU_SCRIPT: &str = r#"
@@ -507,6 +530,49 @@ window.addEventListener("contextmenu", function (event) {
   window.__TAURI__.core.invoke("monitor_context_menu", { x: event.clientX, y: event.clientY }).catch(function () {});
 });
 "#;
+
+/// 拖拽兜底:命中区域内按下左键,皮肤自身未处理时兜底为移动悬浮窗。
+/// 判定复刻 tauri drag.js 的拖拽区域语义(裸属性=仅元素自身、deep=子树、
+/// false=阻断、可交互元素阻断),但结论相反:tauri 会拖的让位,tauri 不拖的
+/// (皮肤没有任何标记、或裸属性元素的后代)才兜底;皮肤对 mousedown 调
+/// preventDefault 也视为"已处理"。
+/// 区域外的点击根本到不了页面(原生命中层已拦截),兜底天然只在触发区域内生效。
+const DRAG_FALLBACK_SCRIPT: &str = r#"
+(function () {
+  var CLICKABLE_TAGS = ["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "LABEL", "SUMMARY"];
+  var INTERACTIVE_ROLES = ["button", "link", "menuitem", "tab", "checkbox", "radio", "switch", "option"];
+  function isClickable(el) {
+    return CLICKABLE_TAGS.indexOf(el.tagName) !== -1
+      || (el.hasAttribute("contenteditable") && el.getAttribute("contenteditable") !== "false")
+      || (el.hasAttribute("tabindex") && el.getAttribute("tabindex") !== "-1")
+      || (el.getAttribute("role") !== null && INTERACTIVE_ROLES.indexOf(el.getAttribute("role")) !== -1);
+  }
+  function decide(path) {
+    for (var i = 0; i < path.length; i++) {
+      var el = path[i];
+      if (!(el instanceof HTMLElement)) continue;
+      var attr = el.getAttribute("data-tauri-drag-region");
+      if (isClickable(el) && attr === null) return "skip";
+      if (attr === "false") return "skip";
+      if (attr === "deep") return "tauri";
+      if (attr === "" || attr === "true") return el === path[0] ? "tauri" : "fallback";
+    }
+    return "fallback";
+  }
+  window.addEventListener("mousedown", function (event) {
+    if (event.button !== 0) return;
+    if (event.detail !== 1 && event.detail !== 2) return;
+    if (event.defaultPrevented) return;
+    if (decide(event.composedPath()) !== "fallback") return;
+    window.__TAURI__.core.invoke("monitor_start_drag").catch(function () {});
+  });
+})();
+"#;
+
+/// 生产模式注入脚本:右键菜单 + 拖拽兜底。
+pub fn production_script() -> String {
+    format!("{}\n{}", CONTEXTMENU_SCRIPT, DRAG_FALLBACK_SCRIPT)
+}
 
 /// 调试模式注入:右键 → 单条"退出调试"菜单;Esc 直接退出。
 pub const DEBUG_SCRIPT: &str = r#"
@@ -521,9 +587,57 @@ window.addEventListener("keydown", function (event) {
 });
 "#;
 
+/// 调试模式的命中区域覆盖层:半透明红色填充 + 虚线描边,pointer-events 关闭
+/// 不挡皮肤自身的拖拽/右键。`__HIT_REGION_JSON__` 占位由 debug_script() 替换。
+const DEBUG_OVERLAY_SCRIPT: &str = r#"
+(function () {
+  var region = __HIT_REGION_JSON__;
+  var NS = "http://www.w3.org/2000/svg";
+  var svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("style", "position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;z-index:2147483647");
+  var node;
+  if (region.shape === "ellipse") {
+    node = document.createElementNS(NS, "ellipse");
+    node.setAttribute("cx", region.cx);
+    node.setAttribute("cy", region.cy);
+    node.setAttribute("rx", region.rx);
+    node.setAttribute("ry", region.ry);
+  } else if (region.shape === "path") {
+    node = document.createElementNS(NS, "path");
+    node.setAttribute("d", region.d);
+  } else {
+    node = document.createElementNS(NS, "rect");
+    node.setAttribute("width", "100%");
+    node.setAttribute("height", "100%");
+  }
+  node.setAttribute("fill", "rgba(255,60,60,0.12)");
+  node.setAttribute("stroke", "rgba(255,60,60,0.85)");
+  node.setAttribute("stroke-width", "1.5");
+  node.setAttribute("stroke-dasharray", "6 4");
+  svg.appendChild(node);
+  document.body.appendChild(svg);
+  window.addEventListener("hit-overlay-toggle", function (event) {
+    var show = !(event.detail && event.detail.visible === false);
+    svg.style.display = show ? "" : "none";
+  });
+})();
+"#;
+
+/// 调试模式注入脚本:右键退出菜单 + Esc 退出 + 拖拽兜底 + 命中区域覆盖层(带区域数据)。
+/// 用占位替换而非 format! 拼括号,避免 JS 花括号转义错误。
+pub fn debug_script(region: &HitRegion) -> String {
+    format!(
+        "{}\n{}\n{}",
+        DEBUG_SCRIPT,
+        DRAG_FALLBACK_SCRIPT,
+        DEBUG_OVERLAY_SCRIPT.replace("__HIT_REGION_JSON__", &region.to_json().to_string())
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hit_region::HitRegion;
     use std::fs;
 
     fn temp_dir(tag: &str) -> PathBuf {
@@ -611,6 +725,100 @@ mod tests {
             parse_skin_config(r#"{"name":"x","version":1,"width":300,"height":112,"fancy":true}"#)
                 .unwrap();
         assert_eq!(warnings, vec!["未知字段: fancy".to_string()]);
+    }
+
+    #[test]
+    fn parse_hit_region_valid_and_default() {
+        // 缺省 → 整窗
+        let (cfg, _) =
+            parse_skin_config(r#"{"name":"x","version":1,"width":300,"height":112}"#).unwrap();
+        assert_eq!(cfg.hit_region, HitRegion::Full);
+
+        let (cfg, warnings) = parse_skin_config(
+            r#"{"name":"x","version":1,"width":200,"height":200,
+                "hitRegion":{"shape":"ellipse","cx":100,"cy":100,"rx":88,"ry":88}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.hit_region,
+            HitRegion::Ellipse { cx: 100.0, cy: 100.0, rx: 88.0, ry: 88.0 }
+        );
+        assert!(warnings.is_empty());
+
+        let (cfg, _) = parse_skin_config(
+            r#"{"name":"x","version":1,"width":200,"height":200,
+                "hitRegion":{"shape":"path","d":"M 0 0 H 200 V 200 H 0 Z"}}"#,
+        )
+        .unwrap();
+        assert!(cfg.hit_region.contains(100.0, 100.0));
+        assert!(!cfg.hit_region.contains(250.0, 250.0));
+    }
+
+    #[test]
+    fn parse_hit_region_errors_and_warnings() {
+        let cases: &[(&str, &str)] = &[
+            (
+                r#"{"name":"x","version":1,"width":200,"height":200,"hitRegion":{"shape":"rect"}}"#,
+                "hitRegion.shape 不支持",
+            ),
+            (
+                r#"{"name":"x","version":1,"width":200,"height":200,"hitRegion":{"shape":"ellipse"}}"#,
+                "hitRegion.ellipse",
+            ),
+            (
+                r#"{"name":"x","version":1,"width":200,"height":200,"hitRegion":{"shape":"path","d":"M 0 0 X"}}"#,
+                "hitRegion.path",
+            ),
+            (
+                r#"{"name":"x","version":1,"width":200,"height":200,"hitRegion":5}"#,
+                "hitRegion 必须是对象",
+            ),
+        ];
+        for (json, needle) in cases {
+            let err = parse_skin_config(json).unwrap_err();
+            assert!(err.contains(needle), "json={} err={}", json, err);
+        }
+
+        let (_cfg, warnings) = parse_skin_config(
+            r#"{"name":"x","version":1,"width":200,"height":200,
+                "hitRegion":{"shape":"ellipse","cx":1,"cy":1,"rx":1,"ry":1,"extra":true}}"#,
+        )
+        .unwrap();
+        assert_eq!(warnings, vec!["hitRegion 未知字段: extra".to_string()]);
+    }
+
+    #[test]
+    fn debug_script_embeds_region_json() {
+        let s = debug_script(&HitRegion::Ellipse { cx: 1.0, cy: 2.0, rx: 3.0, ry: 4.0 });
+        assert!(s.contains("\"shape\":\"ellipse\""));
+        assert!(s.contains("\"rx\":3.0"));
+        assert!(!s.contains("__HIT_REGION_JSON__"), "占位符应被替换");
+        // 覆盖层必须监听开关事件(右键菜单切换用);调试模式同样要有拖拽兜底
+        assert!(s.contains("hit-overlay-toggle"));
+        assert!(s.contains("monitor_start_drag"));
+        let s2 = debug_script(&HitRegion::Full);
+        assert!(s2.contains("\"shape\":\"full\""));
+    }
+
+    #[test]
+    fn production_script_has_menu_and_drag_fallback() {
+        let s = production_script();
+        assert!(s.contains("monitor_context_menu"), "生产注入必须含右键菜单");
+        assert!(s.contains("monitor_start_drag"), "生产注入必须含拖拽兜底");
+        assert!(s.contains("data-tauri-drag-region"), "兜底必须按 tauri 拖拽区域语义判定");
+        assert!(s.contains("\"deep\""), "兜底必须识别 deep 子树拖拽");
+        assert!(s.contains("\"false\""), "兜底必须尊重显式禁用");
+        assert!(s.contains("defaultPrevented"), "皮肤 preventDefault 时兜底必须让位");
+    }
+
+    #[test]
+    fn hit_overlay_toggle_returns_new_state() {
+        let start = hit_overlay_visible();
+        let a = toggle_hit_overlay();
+        assert_eq!(a, !start);
+        let b = toggle_hit_overlay();
+        assert_eq!(b, start);
+        assert_eq!(hit_overlay_visible(), start);
     }
 
     #[test]

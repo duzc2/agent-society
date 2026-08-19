@@ -3,6 +3,9 @@
 
 mod commands;
 mod config_resolver;
+mod hit_region;
+#[cfg(windows)]
+mod hit_test;
 mod logging;
 mod monitor;
 mod readiness;
@@ -121,6 +124,17 @@ pub fn run() {
         builder = builder.on_menu_event(|app, event| {
             if event.id().as_ref() == "debug_quit" {
                 app.exit(0);
+            } else if event.id().as_ref() == "debug_toggle_hit_overlay" {
+                // 切换覆盖层显示并把新状态推给调试页面(页面侧 svg.style.display 跟随)
+                let visible = skin::toggle_hit_overlay();
+                if let Err(e) = app.emit_to(
+                    "monitor",
+                    "hit-overlay-toggle",
+                    serde_json::json!({ "visible": visible }),
+                ) {
+                    let logger = app.state::<FileLogger>().inner().clone();
+                    logger.error(&format!("发射覆盖层开关事件失败: {}", e), Some("hit_overlay"));
+                }
             }
         });
     } else {
@@ -147,6 +161,7 @@ pub fn run() {
             commands::launcher_retry,
             commands::launcher_exit,
             commands::monitor_context_menu,
+            commands::monitor_start_drag,
             commands::skin_debug_menu,
             commands::skin_debug_exit,
             commands::settings_get,

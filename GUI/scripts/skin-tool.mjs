@@ -15,16 +15,18 @@
 // 校验规则(与 GUI/src-tauri/src/skin.rs 的解析一致):
 //   skin.json 必备:name(1-64 字符)、version(=1)、width/height(5..2000 数字);
 //   可选布尔:transparency/alwaysOnTop/shadow/resizable/skipTaskbar(默认 true/true/false/false/true);
+//   可选命中区域:hitRegion(shape=ellipse|path,缺省=整窗,详见 skins/README.md 3.1 节);
 //   未知字段仅警告。index.html 必备。preview.png 必备且恰好 240x160 PNG。
 //   媒体引用(HTML src/href/poster、style 内联 url()、<style> 块、CSS url()/@import、
 //   JS fetch()/import()/url() 的相对路径)必须存在且不得逃逸皮肤目录;
 //   不允许 "/" 开头的绝对路径与 skin:// / tauri:// 字面量;http(s)/data:/# 放行。
 //
-// 调试模式(--skin-debug)由 GUI 启动器支持:只开皮肤悬浮窗,假数据每 10s 随机变化,
-// 不启动服务器/托盘/单实例;退出:右键菜单"退出调试" / Esc / 关闭窗口。
+// 调试模式(--skin-debug)由 GUI 启动器支持:校验通过后自动启动悬浮窗(exe 缺失时
+// 先自动 cargo build);只开皮肤悬浮窗,假数据每 10s 随机变化,不启动服务器/托盘/
+// 单实例;右键菜单可切换命中区域覆盖层显示;退出:右键菜单"退出调试" / Esc / 关闭窗口。
 //
 // 测试: cd GUI/scripts && node --test test/skin-tool.test.mjs(root npm test 的 glob 不覆盖此目录)
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   existsSync,
   readFileSync,
@@ -117,6 +119,7 @@ const KNOWN_FIELDS = [
   "version",
   "width",
   "height",
+  "hitRegion",
   "transparency",
   "alwaysOnTop",
   "shadow",
@@ -147,6 +150,51 @@ function validateSchema(obj) {
   for (const k of ["transparency", "alwaysOnTop", "shadow", "resizable", "skipTaskbar"]) {
     if (obj[k] !== undefined && typeof obj[k] !== "boolean") {
       errors.push(`字段 ${k} 必须为布尔值(实际: ${JSON.stringify(obj[k])})`);
+    }
+  }
+  const hr = validateHitRegion(obj.hitRegion);
+  errors.push(...hr.errors);
+  warnings.push(...hr.warnings);
+  return { errors, warnings };
+}
+
+/// 校验 hitRegion(与启动器 skin.rs 规则一致;path 的 d 只做字符级白名单,
+/// 深度语法解析由启动器加载时强校验)。
+function validateHitRegion(hr) {
+  const errors = [];
+  const warnings = [];
+  if (hr === undefined) return { errors, warnings };
+  if (typeof hr !== "object" || hr === null || Array.isArray(hr)) {
+    errors.push("字段 hitRegion 必须是对象");
+    return { errors, warnings };
+  }
+  const knownSub = ["shape", "cx", "cy", "rx", "ry", "d"];
+  for (const k of Object.keys(hr)) {
+    if (!knownSub.includes(k)) warnings.push(`hitRegion 未知字段: ${k}`);
+  }
+  const shape = hr.shape;
+  if (!["ellipse", "path"].includes(shape)) {
+    errors.push(`hitRegion.shape 必须是 "ellipse" 或 "path"(实际: ${JSON.stringify(shape)})`);
+    return { errors, warnings };
+  }
+  if (shape === "ellipse") {
+    for (const k of ["cx", "cy", "rx", "ry"]) {
+      const v = hr[k];
+      if (typeof v !== "number" || !Number.isFinite(v)) {
+        errors.push(`hitRegion.ellipse 字段 ${k} 缺失或非数字(实际: ${JSON.stringify(v)})`);
+      }
+    }
+    for (const k of ["rx", "ry"]) {
+      if (typeof hr[k] === "number" && Number.isFinite(hr[k]) && hr[k] <= 0) {
+        errors.push(`hitRegion.ellipse 的 ${k} 必须为正数(实际: ${hr[k]})`);
+      }
+    }
+  } else {
+    const d = hr.d;
+    if (typeof d !== "string" || d.trim().length === 0) {
+      errors.push("hitRegion.path 字段 d 缺失或非字符串");
+    } else if (!/^[\s,0-9.eE+\-MmLlHhVvZzCcQqAa]+$/.test(d)) {
+      errors.push("hitRegion.path 的 d 含非法字符(仅支持数字与 M m L l H h V v Z z C c Q q A a 命令)");
     }
   }
   return { errors, warnings };
@@ -356,6 +404,7 @@ export function main(argv, deps = {}) {
     roots = defaultRoots(),
     exeResolver = resolveExe,
     spawner = (cmd, args) => spawn(cmd, args, { stdio: "inherit" }),
+    builder = (cmd, args, cwd) => spawnSync(cmd, args, { cwd, stdio: "inherit" }),
     out = console,
   } = deps;
 
@@ -392,15 +441,31 @@ export function main(argv, deps = {}) {
   out.log(`✅ 校验通过(${res.checks.length} 项检查, ${res.warnings.length} 个警告)`);
   if (parsed.mode !== "debug") return 0;
 
-  const exe = exeResolver();
+  // 校验通过后自动拉起 launcher 调试悬浮窗;exe 不存在时先自动 cargo build,
+  // 构建成功继续启动,失败才报错退出——全程无需人工启动 launcher。
+  let exe = exeResolver();
   if (!exe) {
-    out.error("❌ 未找到 agent-society-launcher.exe(target/debug 与 target/release 均无)。" + BUILD_HINT);
+    out.log("未找到 agent-society-launcher.exe,自动构建: cargo build(src-tauri)");
+    const build = builder("cargo", ["build"], SRC_TAURI);
+    if (build.status !== 0) {
+      out.error("❌ 自动构建失败。" + BUILD_HINT);
+      return 1;
+    }
+    exe = exeResolver();
+  }
+  if (!exe) {
+    out.error("❌ 构建后仍未找到 agent-society-launcher.exe(target/debug 与 target/release 均无)。" + BUILD_HINT);
     return 1;
   }
   out.log(`启动皮肤调试模式: ${exe} --skin-debug ${parsed.skin}`);
   out.log("仅打开皮肤悬浮窗;假数据每 10s 随机变化;不启动服务器/托盘/单实例(可与生产实例并存)。");
   out.log('退出调试:悬浮窗右键菜单"退出调试" / Esc / 关闭窗口。');
-  spawner(exe, ["--skin-debug", parsed.skin]);
+  try {
+    spawner(exe, ["--skin-debug", parsed.skin]);
+  } catch (err) {
+    out.error(`❌ 启动失败: ${err && err.message ? err.message : err}`);
+    return 1;
+  }
   return 0;
 }
 
