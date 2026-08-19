@@ -11,8 +11,9 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<tauri::tray::TrayIco
     let logger = app.state::<FileLogger>().inner().clone();
 
     let open_item = MenuItem::with_id(app, "open_main", "打开主界面", true, None::<&str>)?;
+    let monitor_item = MenuItem::with_id(app, "toggle_monitor", "监视窗口", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
+    let menu = Menu::with_items(app, &[&open_item, &monitor_item, &quit_item])?;
 
     let tray = TrayIconBuilder::with_id("launcher-tray")
         .icon(Image::from_bytes(include_bytes!("../icons/32x32.png")).expect("托盘图标文件无效"))
@@ -21,6 +22,7 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<tauri::tray::TrayIco
         .show_menu_on_left_click(false) // 左键不弹菜单,避免与双击冲突
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open_main" => windows::show_main(app),
+            "toggle_monitor" => windows::toggle_monitor(app),
             "quit" => crate::begin_quit(app.clone()),
             _ => {}
         })
@@ -31,6 +33,6 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<tauri::tray::TrayIco
         })
         .build(app)?;
 
-    logger.info("托盘已创建", Some("菜单: 打开主界面 / 退出;双击打开主界面"));
+    logger.info("托盘已创建", Some("菜单: 打开主界面 / 监视窗口 / 退出;双击打开主界面"));
     Ok(tray)
 }

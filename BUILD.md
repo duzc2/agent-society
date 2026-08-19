@@ -31,8 +31,9 @@ dist/win-unpacked/
 2. 将当前工作区中 **由 git 跟踪且允许发布的文件** 复制到 `dist/win-unpacked/`。
 3. **不复制任何未被 git 跟踪的工作区文件**。
 4. 按当前发布要求，**不打包 `docs/` 与 `runtime/`**。
-5. 额外附带发布运行需要的构建产物，例如 `ffmpeg.exe`。
-6. 清理编译阶段生成但不应进入发布目录的临时文件，例如 `start.js.map`。
+5. 按当前发布要求，**不打包 `agent-society-data*`、`config/` 与所有句点开头的顶层条目**(文件夹与文件:`.agents/`、`.claude/`、`.github/`、`.trae/`、`.vscode/`、`.gitignore` 等)。
+6. 额外附带发布运行需要的构建产物，例如 `ffmpeg.exe`。
+7. 清理编译阶段生成但不应进入发布目录的临时文件，例如 `start.js.map`。
 
 这样可以保证：
 
@@ -43,7 +44,7 @@ dist/win-unpacked/
 构建完成后可检查：
 
 - `dist/win-unpacked/agent-society.exe` 是否存在。
-- `dist/win-unpacked/` 中是否未包含 `docs/` 与 `runtime/`。
+- `dist/win-unpacked/` 中是否未包含 `docs/`、`runtime/`、`agent-society-data*`、`config/` 与句点开头的顶层条目。
 - 如果本地存在 `node_modules/ffmpeg-static/ffmpeg.exe`，则发布目录根下会附带 `ffmpeg.exe`。
 
 ## Windows zip 包

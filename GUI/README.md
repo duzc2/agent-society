@@ -1,6 +1,6 @@
 # Agent Society 启动器(GUI)
 
-Tauri 2 桌面引导启动器:无终端窗口启动 Agent Society 服务器(`--no-browser`),启动过程显示透明无边框进度窗,托盘常驻,服务器就绪后自动打开主窗口加载 `http://localhost:{port}/web/`。
+Tauri 2 桌面引导启动器:无终端窗口启动 Agent Society 服务器(`--no-browser`),启动过程显示透明无边框进度窗,托盘常驻,服务器就绪后自动打开主窗口加载 `http://localhost:{port}/web/`,并显示悬浮监视窗(服务器状态 + 智能体总数/工作中数)。
 
 ## 构建要求
 
@@ -45,9 +45,10 @@ cargo tauri build                # 产出 NSIS 安装包(dist/)
 
 | 操作 | 行为 |
 |---|---|
-| 启动 | 进度窗(无边框/透明/置顶,不确定态动画+已用时)→ 服务器就绪 → 关闭进度窗、打开主窗口 |
+| 启动 | 进度窗(无边框/透明/置顶,不确定态动画+已用时)→ 服务器就绪 → 关闭进度窗、打开主窗口与监视窗 |
+| 监视窗口 | 悬浮(无边框/透明/置顶/可拖动),停靠主屏工作区右上角:服务器状态点(运行中/繁忙/端口关闭)+ 智能体总数 + 工作中数;关闭=隐藏,托盘菜单"监视窗口"可再显隐 |
 | 主窗口点关闭 | 仅隐藏,进程与服务器继续运行 |
-| 托盘右键 | 菜单:打开主界面 / 退出 |
+| 托盘右键 | 菜单:打开主界面 / 监视窗口 / 退出 |
 | 托盘双击 | 打开主窗口(Windows 专用事件) |
 | 托盘"退出" | 优雅停止服务器(≤60s)→ 退出;若服务器非本 GUI 启动(端口预占),不停止、直接退出 |
 | 重复启动 | 单实例:第二个实例立即退出,并唤起已有实例的主窗口 |
@@ -64,6 +65,9 @@ cargo tauri build                # 产出 NSIS 安装包(dist/)
 6. 托盘图标对象必须持有在状态里(TrayIcon drop 即消失);`image-png` feature 缺失时开发正常、打包后托盘图标不显示。
 7. 主窗口加载远程 URL(`http://localhost:{port}/web/`),不调用任何 Tauri IPC(Tauri 2.11 起远程源强制 ACL,天然隔离)。
 8. **心跳的"繁忙容错"判别**:实测 std 在 Windows 上对被拒连接报 `TimedOut` 而非 `ConnectionRefused`(阻塞 connect 也要 ~2s 才报真实错误)。因此三态探测在连接失败后用"能否 bind 该端口"二次判别:bind 成功 = 无监听者(Down);bind 失败 = 端口被占(Busy,容忍)。不要改回只靠 connect 错误类型判断。
+9. **监视数据来源 = 心跳消息队列,不是 REST 端点**。智能体计数来自 `POST /api/heartbeat`(body `{"lastMessageId":N}`)响应中的 `org_tree` 消息(服务器 HeartbeatBroker,无客户端状态):客户端记住最大 messageId 增量拉取,`needRefresh=true` 时归零重取(服务器重启序列号重置)。计数口径:`total` = 组织树中 `status != "deleted"` 的节点(含 root/user);`working` = `computeStatus ∈ {processing, waiting_llm}`(stopping/stopped/terminating 是消亡过渡态不计入)。
+10. **心跳响应的实体是 chunked 编码**:实测 Hono/Node 对大 JSON 响应给 `Transfer-Encoding: chunked`(无 Content-Length),读体前必须按 chunked 解码(monitor.rs 的 `decode_http_body` 已处理 chunked / Content-Length / 无定界三种)。不要假定 read_to_end 拿到的是裸 JSON。
+11. **监视窗口 2s 轮询与退出判定的 1s 心跳是两条独立线程**:HTTP 失败只降级为"保留上次数据"(繁忙容忍),绝不触发退出判定;退出只由三态 TCP 探测的连续 Down 计数决定。修改时不要把两者合并。
 
 ## 已知权衡与限制
 
@@ -75,7 +79,7 @@ cargo tauri build                # 产出 NSIS 安装包(dist/)
 
 ```bash
 cd GUI/src-tauri
-cargo test                 # 24 个单测(含 CTRL_BREAK 送达、spawn 环境/cwd、CreateProcessW 参数)
+cargo test                 # 44 个单测(CTRL_BREAK 送达、spawn 环境/cwd、心跳三态探测、org_tree 计数、chunked 解码等)
 cargo test -- --ignored    # 集成测试:真实服务器完整优雅关闭链(~20s~1min,需服务器目录可达且端口空闲)
 ```
 

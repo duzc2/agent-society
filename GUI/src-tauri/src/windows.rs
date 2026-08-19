@@ -42,6 +42,60 @@ pub fn hide_progress(app: &tauri::AppHandle) {
     }
 }
 
+/// 悬浮监视窗口:无边框 + 透明背景 + 置顶 + 可拖动,停靠主显示器工作区右上角。
+pub fn create_monitor_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWindow> {
+    let logger = app.state::<FileLogger>().inner().clone();
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(app, "monitor", tauri::WebviewUrl::App("monitor.html".into()))
+            .title("Agent Society 监视")
+            .inner_size(300.0, 112.0)
+            .decorations(false)
+            .transparent(true)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .visible(false);
+    // 停靠工作区右上角(避开任务栏);无显示器信息时用系统默认位置
+    if let Some(monitor) = app.primary_monitor().ok().flatten() {
+        let work = monitor.work_area();
+        let scale = monitor.scale_factor();
+        let margin = 12.0;
+        let x = work.position.x as f64 / scale + work.size.width as f64 / scale - 300.0 - margin;
+        let y = work.position.y as f64 / scale + margin;
+        builder = builder.position(x, y);
+    } else {
+        logger.warn("无法获取主显示器,监视窗口使用系统默认位置", None);
+    }
+    builder.build()
+}
+
+pub fn show_monitor(app: &tauri::AppHandle) {
+    let logger = app.state::<FileLogger>().inner().clone();
+    match app.get_webview_window("monitor") {
+        Some(w) => {
+            if let Err(e) = w.show() {
+                logger.error(&format!("显示监视窗口失败: {}", e), None);
+            }
+        }
+        None => logger.error("监视窗口不存在,无法显示", None),
+    }
+}
+
+/// 托盘"监视窗口"项:可见则隐藏,隐藏则显示。
+pub fn toggle_monitor(app: &tauri::AppHandle) {
+    let logger = app.state::<FileLogger>().inner().clone();
+    match app.get_webview_window("monitor") {
+        Some(w) => {
+            let visible = w.is_visible().unwrap_or(false);
+            let action = if visible { w.hide() } else { w.show() };
+            if let Err(e) = action {
+                logger.error(&format!("切换监视窗口失败: {}", e), None);
+            }
+        }
+        None => logger.error("监视窗口不存在,无法切换", None),
+    }
+}
+
 /// 主窗口:标准窗口结构(默认 decorations=true),加载服务器 Web 界面。
 pub fn create_main_window(app: &tauri::AppHandle, port: u16) -> tauri::Result<tauri::WebviewWindow> {
     let url = format!("http://localhost:{}/web/", port);

@@ -4,6 +4,7 @@
 mod commands;
 mod config_resolver;
 mod logging;
+mod monitor;
 mod readiness;
 mod server_launcher;
 mod tray;
@@ -155,6 +156,10 @@ pub fn run() {
                 Ok(_) => logger.info("主窗口已创建(隐藏,就绪后显示)", None),
                 Err(e) => logger.error(&format!("创建主窗口失败: {}", e), None),
             }
+            match windows::create_monitor_window(app.handle()) {
+                Ok(_) => logger.info("监视窗口已创建(隐藏,就绪后显示)", None),
+                Err(e) => logger.error(&format!("创建监视窗口失败: {}", e), None),
+            }
             match tray::create_tray(app.handle()) {
                 Ok(icon) => {
                     let state = app.state::<LauncherState>();
@@ -253,6 +258,13 @@ fn monitor_loop(app: tauri::AppHandle, logger: FileLogger) {
                     Some(&format!("port={}", port)),
                 );
             }
+            windows::show_monitor(&app);
+            // 监视窗口数据循环(独立线程;FileLogger 与 AppHandle 均 Clone)
+            std::thread::spawn({
+                let app = app.clone();
+                let logger = logger.clone();
+                move || status_window_loop(app, logger)
+            });
             // owned 与 external 都进入心跳监控:端口关闭 → 退出启动器
             watch_after_ready(app, logger);
         }
@@ -312,6 +324,74 @@ fn watch_after_ready(app: tauri::AppHandle, logger: FileLogger) {
                 begin_quit(app);
                 return;
             }
+        }
+    }
+}
+
+/// 监视窗口数据循环(就绪后独立线程,与退出判定的心跳线程并行):
+/// 每 2s 三态 TCP 探测定服务器状态;Up 时 POST /api/heartbeat 取智能体计数。
+/// HTTP 超时/失败 = 繁忙容忍:保留上次计数,不视为服务器关闭(退出判定归心跳线程)。
+/// 状态变化才写日志,避免 2s 一条刷爆 launcher.log。
+fn status_window_loop(app: tauri::AppHandle, logger: FileLogger) {
+    let state = app.state::<LauncherState>();
+    let port = state.port;
+    let mut client = monitor::HeartbeatClient::new();
+    let mut counts: Option<monitor::AgentCounts> = None;
+    let mut last_server: &'static str = "";
+    let mut last_counts: Option<monitor::AgentCounts> = None;
+
+    loop {
+        std::thread::sleep(Duration::from_secs(2));
+        // 退出序列/失败态后停止刷新
+        if !matches!(&*state.phase.lock().unwrap(), Phase::Ready) {
+            return;
+        }
+        let server = match readiness::tcp_probe_detailed(port, readiness::PROBE_TIMEOUT) {
+            readiness::ProbeResult::Up => "up",
+            readiness::ProbeResult::Busy => "busy",
+            readiness::ProbeResult::Down => "down",
+        };
+        let mut updated = false;
+        if server == "up" {
+            match monitor::fetch_heartbeat(port, &mut client) {
+                Ok(new_counts) => {
+                    if let Some(c) = new_counts {
+                        counts = Some(c);
+                        updated = true;
+                    }
+                }
+                Err(e) => {
+                    logger.warn(
+                        "监视窗口心跳请求失败(保留上次数据)",
+                        Some(&format!("port={} {}", port, e)),
+                    );
+                }
+            }
+        }
+        if let Err(e) = app.emit_to(
+            "monitor",
+            "launcher://monitor",
+            serde_json::json!({
+                "server": server,
+                "total": counts.map(|c| c.total),
+                "working": counts.map(|c| c.working),
+                "updated": updated
+            }),
+        ) {
+            logger.error(&format!("发射监视事件失败: {}", e), None);
+        }
+        if server != last_server || counts != last_counts {
+            logger.info(
+                "监视数据更新",
+                Some(&format!(
+                    "server={} total={:?} working={:?}",
+                    server,
+                    counts.map(|c| c.total),
+                    counts.map(|c| c.working)
+                )),
+            );
+            last_server = server;
+            last_counts = counts;
         }
     }
 }
@@ -397,6 +477,15 @@ pub fn begin_quit(app: tauri::AppHandle) {
         let logger = app.state::<FileLogger>().inner().clone();
         logger.info("退出序列已在进行中,忽略重复请求", None);
         return;
+    }
+    // 监视窗口显示"正在停止…"(计数保持上次值,停止期间不再刷新)
+    if let Err(e) = app.emit_to(
+        "monitor",
+        "launcher://monitor",
+        serde_json::json!({ "server": "stopping" }),
+    ) {
+        let logger = app.state::<FileLogger>().inner().clone();
+        logger.error(&format!("发射监视停止事件失败: {}", e), None);
     }
     set_phase(&app, &state, Phase::Stopping);
     windows::show_progress(&app); // 退出过程显示"正在停止服务器…"

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "进度窗口最小权限:invoke 与事件监听、无边框拖动",
-  "windows": ["progress"],
+  "description": "进度/监视窗口最小权限:invoke 与事件监听、无边框拖动",
+  "windows": ["progress", "monitor"],
   "permissions": ["core:default", "core:window:allow-start-dragging"]
 }

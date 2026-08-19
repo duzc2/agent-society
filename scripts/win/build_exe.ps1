@@ -155,7 +155,11 @@ function Should-IncludeTrackedFile {
     .SYNOPSIS
         判断 git 跟踪文件是否应该进入发布目录。
     .DESCRIPTION
-        默认规则是“git 跟踪文件全部进入包”，但用户已明确要求 docs/ 与 runtime/ 不进入发布包。
+        默认规则是“git 跟踪文件全部进入包”，但用户已明确要求以下内容不进入发布包：
+        - docs/ 与 runtime/(开发文档与开发期运行目录);
+        - agent-society-data*(运行时数据目录,含 -3001 等变体);
+        - config/(本地配置目录,发布包不携带任何配置);
+        - 所有句点开头的顶层条目(文件夹与文件,.agents/.claude/.github/.trae/.vscode/.gitignore 等)。
         这里将该约束集中在一个函数里，避免散落在复制流程中。
     .PARAMETER RelativePath
         相对于项目根目录的 git 跟踪文件路径。
@@ -172,6 +176,15 @@ function Should-IncludeTrackedFile {
         return $false
     }
     if ($normalizedPath.StartsWith('runtime/')) {
+        return $false
+    }
+    if ($normalizedPath.StartsWith('agent-society-data')) {
+        return $false
+    }
+    if ($normalizedPath.StartsWith('config/')) {
+        return $false
+    }
+    if ($normalizedPath.Split('/')[0].StartsWith('.')) {
         return $false
     }
 
