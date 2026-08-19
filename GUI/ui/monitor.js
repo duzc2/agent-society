@@ -1,4 +1,5 @@
 // 监视窗口:接收 launcher://monitor 事件,渲染服务器状态与智能体计数。
+const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const dot = document.getElementById("status-dot");
@@ -35,4 +36,13 @@ listen("launcher://monitor", (event) => {
     const t = new Date();
     updatedEl.textContent = "更新 " + t.toTimeString().slice(0, 8);
   }
+});
+
+// 右键 = 托盘菜单(同一份菜单内容与点击行为,由 Rust 端弹出原生菜单;
+// 页面的 preventDefault 会抑制 WebView2 默认上下文菜单)
+window.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+  invoke("monitor_context_menu").catch(() => {
+    // 弹出失败(如退出序列中)静默:右键菜单是装饰性操作,Rust 侧已记日志
+  });
 });

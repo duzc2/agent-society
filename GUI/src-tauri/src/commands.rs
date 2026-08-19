@@ -69,3 +69,29 @@ pub fn launcher_exit(app: tauri::AppHandle) -> Result<(), String> {
     begin_quit(app);
     Ok(())
 }
+
+/// 监视窗口右键:在光标处弹出与托盘完全相同的原生菜单。
+/// 菜单内容与点击行为只有一处定义(tray::build_menu / tray::handle_menu_event);
+/// muda::Menu 内部是 Rc<RefCell>(非 Send),不能放进 managed state,
+/// 因此每次 popup 重建实例——同一份定义,不存在第二套维护。
+///
+/// **必须是 async 命令**:同步命令在 invoke 到达的主线程上内联执行
+/// (tauri-macros body_blocking: `let result = $path(...)`),而 build_menu/popup_menu
+/// 内部的 run_item_main_thread! 是"向主线程投递 + 阻塞等待"——主线程上调用等于
+/// 自己等自己,永久死锁(实测:整个主线程冻结,后续所有 IPC 排队)。
+/// async 命令跑在 async_runtime 线程池,投递-等待的双方不在同一线程。
+/// tauri 官方 menu 插件的 popup 命令同为 async(plugin.rs:668),同一原因。
+#[tauri::command]
+pub async fn monitor_context_menu(app: tauri::AppHandle) -> Result<(), String> {
+    let logger = app.state::<FileLogger>().inner().clone();
+    let window = app
+        .get_webview_window("monitor")
+        .ok_or_else(|| "监视窗口不存在".to_string())?;
+    let menu = crate::tray::build_menu(&app).map_err(|e| e.to_string())?;
+    if let Err(e) = window.popup_menu(&menu) {
+        logger.error(&format!("监视窗口右键菜单弹出失败: {}", e), None);
+        return Err(e.to_string());
+    }
+    logger.info("监视窗口右键菜单弹出", None);
+    Ok(())
+}

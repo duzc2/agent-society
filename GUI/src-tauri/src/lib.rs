@@ -117,7 +117,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::launcher_status,
             commands::launcher_retry,
-            commands::launcher_exit
+            commands::launcher_exit,
+            commands::monitor_context_menu
         ])
         .setup(|app| {
             let exe_dir = current_exe_dir();
