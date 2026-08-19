@@ -70,7 +70,7 @@ pub fn launcher_exit(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 监视窗口右键:在光标处弹出与托盘完全相同的原生菜单。
+/// 监视窗口右键:在右键点击处弹出与托盘完全相同的原生菜单。
 /// 菜单内容与点击行为只有一处定义(tray::build_menu / tray::handle_menu_event);
 /// muda::Menu 内部是 Rc<RefCell>(非 Send),不能放进 managed state,
 /// 因此每次 popup 重建实例——同一份定义,不存在第二套维护。
@@ -81,17 +81,39 @@ pub fn launcher_exit(app: tauri::AppHandle) -> Result<(), String> {
 /// 自己等自己,永久死锁(实测:整个主线程冻结,后续所有 IPC 排队)。
 /// async 命令跑在 async_runtime 线程池,投递-等待的双方不在同一线程。
 /// tauri 官方 menu 插件的 popup 命令同为 async(plugin.rs:668),同一原因。
+///
+/// **定位用点击点而非光标**:popup_menu 内部用 GetCursorPos 定位,用户右键后
+/// 若光标已移动,菜单会出现在错误位置;这里由 JS 传 event.clientX/Y(逻辑像素),
+/// popup_menu_at(LogicalPosition) 由 muda 做 DPI 转换 + ClientToScreen,钉在点击点。
+///
+/// **重入守卫**:菜单开着时再次右键,新 invoke 的 popup 任务会在 TrackPopupMenu
+/// 的 modal loop 里被泵出 → 嵌套菜单级联。POPUP_ACTIVE 期间忽略后续请求。
 #[tauri::command]
-pub async fn monitor_context_menu(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn monitor_context_menu(app: tauri::AppHandle, x: f64, y: f64) -> Result<(), String> {
+    static POPUP_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if POPUP_ACTIVE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Ok(()); // 上一次弹出尚未结束,忽略重入
+    }
     let logger = app.state::<FileLogger>().inner().clone();
     let window = app
         .get_webview_window("monitor")
         .ok_or_else(|| "监视窗口不存在".to_string())?;
     let menu = crate::tray::build_menu(&app).map_err(|e| e.to_string())?;
-    if let Err(e) = window.popup_menu(&menu) {
-        logger.error(&format!("监视窗口右键菜单弹出失败: {}", e), None);
-        return Err(e.to_string());
+    let t0 = std::time::Instant::now();
+    let result = window.popup_menu_at(&menu, tauri::LogicalPosition::new(x, y));
+    let dur_ms = t0.elapsed().as_millis();
+    POPUP_ACTIVE.store(false, std::sync::atomic::Ordering::SeqCst);
+    match result {
+        Ok(()) => {
+            logger.info(
+                "监视窗口右键菜单弹出",
+                Some(&format!("x={} y={} dur_ms={}", x, y, dur_ms)),
+            );
+            Ok(())
+        }
+        Err(e) => {
+            logger.error(&format!("监视窗口右键菜单弹出失败: {}", e), None);
+            Err(e.to_string())
+        }
     }
-    logger.info("监视窗口右键菜单弹出", None);
-    Ok(())
 }

@@ -39,10 +39,11 @@ listen("launcher://monitor", (event) => {
 });
 
 // 右键 = 托盘菜单(同一份菜单内容与点击行为,由 Rust 端弹出原生菜单;
-// 页面的 preventDefault 会抑制 WebView2 默认上下文菜单)
+// 页面的 preventDefault 会抑制 WebView2 默认上下文菜单)。
+// 传点击坐标(clientX/Y 为逻辑像素),菜单钉在点击点而非当前光标位置。
 window.addEventListener("contextmenu", (event) => {
   event.preventDefault();
-  invoke("monitor_context_menu").catch(() => {
+  invoke("monitor_context_menu", { x: event.clientX, y: event.clientY }).catch(() => {
     // 弹出失败(如退出序列中)静默:右键菜单是装饰性操作,Rust 侧已记日志
   });
 });

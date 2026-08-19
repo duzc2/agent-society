@@ -46,7 +46,7 @@ cargo tauri build                # 产出 NSIS 安装包(dist/)
 | 操作 | 行为 |
 |---|---|
 | 启动 | 进度窗(无边框/透明/置顶,不确定态动画+已用时)→ 服务器就绪 → 关闭进度窗、打开主窗口与监视窗 |
-| 监视窗口 | 悬浮(无边框/透明/置顶/可拖动),停靠主屏工作区右上角:服务器状态点(运行中/繁忙/端口关闭)+ 智能体总数 + 工作中数;关闭=隐藏,托盘菜单"监视窗口"可再显隐 |
+| 监视窗口 | 悬浮(无边框/透明/置顶/可拖动),停靠主屏工作区右上角:服务器状态点(运行中/繁忙/端口关闭)+ 智能体总数 + 工作中数;关闭=隐藏,托盘菜单"监视窗口"可再显隐;右键弹出与托盘**完全相同**的菜单(同一份内容与行为定义) |
 | 主窗口点关闭 | 仅隐藏,进程与服务器继续运行 |
 | 托盘右键 | 菜单:打开主界面 / 监视窗口 / 退出 |
 | 托盘双击 | 打开主窗口(Windows 专用事件) |
@@ -70,6 +70,12 @@ cargo tauri build                # 产出 NSIS 安装包(dist/)
 11. **监视窗口 2s 轮询与退出判定的 1s 心跳是两条独立线程**:HTTP 失败只降级为"保留上次数据"(繁忙容忍),绝不触发退出判定;退出只由三态 TCP 探测的连续 Down 计数决定。修改时不要把两者合并。
 12. **Windows 透明窗口白底 = Tauri 2 的缺陷,已用 vendor tao 补丁修复**:Tauri 2(tao 0.35)从不给 tao 传 no_redirection_bitmap,透明窗口走旧式 `DwmEnableBlurBehindWindow` 空区域 hack(tao window.rs:1284),在 Win11(26200)上渲染成**白底**。修复方式:`GUI/src-tauri/vendor/tao/` 是 tao 0.35.3 的本地副本,唯一改动在 `platform_impl/windows/window.rs`(init 处,带 PATCH 注释):`no_redirection_bitmap || attributes.transparent`——transparent 窗口**创建时**即带 `WS_EX_NOREDIRECTIONBITMAP`,同时让 blur hack 根本不执行。**关键事实:该位事后用 `SetWindowLongPtrW` 设置会被 Windows 静默忽略**(实测读回不变),必须创建时带;升级 tauri/tao 时核对上游是否已修复,修复后删除 vendor 目录与 Cargo.toml 的 `[patch.crates-io]`。`shadow(false)` 一并设置在两个透明窗口上(避免 DWM 边框扩展干扰)。
 13. **退出时 stderr 的 `Failed to unregister class Chrome_WidgetWin_0. Error = 1412` 是无害的**:1412 = ERROR_CLASS_HAS_WINDOWS,Chromium/WebView2 退出时类注销与窗口销毁的跨线程竞态(与透明补丁无关,已用 A/B 实验证实补丁禁用后仍出现;Electron/CEF 应用同款)。进程退出时 OS 回收一切,无功能影响;release 无控制台,最终用户不可见。不建议为消除它改动退出序列。
+14. **监视窗口右键菜单 = 托盘菜单的共用实现,四个坑都实测踩过**:
+    - **共用方式**:菜单内容与点击行为各只有一处定义(`tray.rs` 的 `build_menu` / `handle_menu_event`)。popup 每次重建菜单实例(muda::Menu 内部是 `Rc<RefCell>` 非 Send,不能放进 managed state)。点击分发**不要**为 popup 另行注册——托盘 `on_menu_event` 注册的是全局监听器(tauri tray/mod.rs 注释:"called for any menu event, ... from the tray icon menu"),popup 点击自动走同一分发,再注册会双份触发。
+    - **popup 必须是 async 命令**:同步命令在 invoke 到达的主线程上内联执行(tauri-macros body_blocking: `let result = $path(...)`),而 build_menu/popup_menu 内部的 `run_item_main_thread!` 是"向主线程投递 + 阻塞等待"——主线程上调用等于自己等自己,永久死锁(实测整个主线程冻结、后续所有 IPC 排队)。async 命令跑在 async_runtime 线程池,投递-等待的双方不在同一线程。tauri 官方 menu 插件的 popup 命令同为 async,同一原因。
+    - **菜单定位用 `popup_menu_at` + JS 传的点击坐标**(`event.clientX/Y` → `LogicalPosition`,muda 内部做 DPI 转换 + ClientToScreen,钉在点击点)。不要用无参 `popup_menu`(内部 `GetCursorPos` 定位):右键后用户光标一动,菜单就弹到错误位置。
+    - **重入守卫**:菜单开着时再次右键,新 invoke 的 popup 任务会被 TrackPopupMenu 的 modal loop 泵出 → 嵌套菜单级联。`commands.rs` 里 `POPUP_ACTIVE` 原子布尔在弹出期间忽略后续请求。
+    - **测试教训**:本机(Win11 26200)上跨进程 `EnumWindows` 枚举不到任何菜单窗口(阳性对照:同一进程内确定开着的 TrackPopupMenu 菜单,跨进程枚举不可见)——菜单可见性无法用跨进程窗口枚举验证,应以"弹出持续时间日志(modal loop 时长)+ 用户实际操作"为证据。
 
 ## 已知权衡与限制
 
