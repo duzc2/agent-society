@@ -1,20 +1,13 @@
-//! 服务器根目录与端口解析,纯函数便于单测:
-//! - serverRoot: launcher.json 覆盖 > 从 exe 向上查找含 start-wrapper.mjs 的目录(≤10 层)
+//! 服务器根目录、端口与本地皮肤设置解析,纯函数便于单测:
+//! - serverRoot: 从 exe 向上查找含 start-wrapper.mjs 的目录(≤10 层)
 //! - httpPort: 镜像服务器 config.js loadApp 的优先级(config/app.local.json > config/app.json > 默认 3000)
+//! - monitorSkin: 用户本地文件 launcher.json(git 不跟踪,从 .example 复制创建)
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 pub const DEFAULT_PORT: u16 = 3000;
 pub const DEFAULT_MAX_DEPTH: u8 = 10;
-
-/// launcher.json 的内容(原始字段,路径解释由 resolve_server_root 完成)
-pub struct LauncherConfig {
-    pub server_root: Option<String>,
-    pub startup_timeout_sec: Option<u64>,
-    /// 监视窗皮肤(技术键 official:<folder> / user:<folder> / 裸文件夹名)
-    pub monitor_skin: Option<String>,
-}
 
 /// 查找 launcher.json:exe 旁 → exe 旁 config/ → GUI 项目根 config/(开发布局)
 pub fn find_launcher_config(exe_dir: &Path) -> Option<PathBuf> {
@@ -41,84 +34,40 @@ pub fn find_gui_root(exe_dir: &Path, max_depth: u8) -> Option<PathBuf> {
     None
 }
 
-pub fn parse_launcher_config(path: &Path) -> Result<LauncherConfig, String> {
+/// 读取 launcher.json 的 monitorSkin(文件数据,解析失败返回 Err 由调用方决定回退)。
+/// 键格式:official:<folder> / user:<folder> / 裸文件夹名(官方优先)。
+pub fn read_monitor_skin(path: &Path) -> Result<Option<String>, String> {
     let raw =
         std::fs::read_to_string(path).map_err(|e| format!("读取 {} 失败: {}", path.display(), e))?;
     let v: Value = serde_json::from_str(&raw)
         .map_err(|e| format!("{} JSON 解析失败: {}", path.display(), e))?;
-    let server_root = v
-        .get("serverRoot")
+    Ok(v.get("monitorSkin")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
-        .map(String::from);
-    let startup_timeout_sec = v.get("startupTimeoutSec").and_then(Value::as_u64);
-    let monitor_skin = v
-        .get("monitorSkin")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .map(String::from);
-    Ok(LauncherConfig {
-        server_root,
-        startup_timeout_sec,
-        monitor_skin,
-    })
+        .map(String::from))
 }
 
-/// 解析服务器根目录:launcher.json 的 serverRoot 覆盖优先(相对路径按 launcher.json 所在目录解释),
-/// 否则从 exe_dir 向上查找含 start-wrapper.mjs 的目录。
+/// 解析服务器根目录:从 exe_dir 向上查找含 start-wrapper.mjs 的目录。
 pub fn resolve_server_root(exe_dir: &Path, max_depth: u8) -> Result<PathBuf, String> {
-    let mut override_failed: Option<String> = None;
-
-    if let Some(lc_path) = find_launcher_config(exe_dir) {
-        match parse_launcher_config(&lc_path) {
-            Ok(cfg) => {
-                if let Some(root) = cfg.server_root {
-                    let base = lc_path.parent().unwrap_or(exe_dir);
-                    let resolved = if Path::new(&root).is_absolute() {
-                        PathBuf::from(&root)
-                    } else {
-                        base.join(&root)
-                    };
-                    if resolved.join("start-wrapper.mjs").is_file() {
-                        return Ok(resolved);
-                    }
-                    override_failed = Some(format!(
-                        "launcher.json 的 serverRoot 无效(目录内无 start-wrapper.mjs): {}",
-                        resolved.display()
-                    ));
-                }
-            }
-            Err(e) => override_failed = Some(e),
-        }
-    }
-
     let mut cur = Some(exe_dir);
     for depth in 0..=max_depth {
         let dir = cur.ok_or_else(|| {
-            let mut msg = format!(
+            format!(
                 "未找到服务器目录(从 {} 向上查找 {} 层)",
                 exe_dir.display(),
                 depth
-            );
-            if let Some(o) = &override_failed {
-                msg.push_str(&format!(";launcher.json 覆盖也失败: {}", o));
-            }
-            msg
+            )
         })?;
         if dir.join("start-wrapper.mjs").is_file() {
             return Ok(dir.to_path_buf());
         }
         cur = dir.parent();
     }
-    let mut msg = format!(
+    Err(format!(
         "未找到服务器目录(从 {} 向上查找超过 {} 层)",
         exe_dir.display(),
         max_depth
-    );
-    if let Some(o) = &override_failed {
-        msg.push_str(&format!(";launcher.json 覆盖也失败: {}", o));
-    }
-    Err(msg)
+    ))
 }
 
 /// 返回 (端口, 来源说明)。镜像服务器 config.js:local 优先,单文件选择后校验,
@@ -147,8 +96,7 @@ pub fn resolve_http_port(server_root: &Path) -> (u16, String) {
     )
 }
 
-/// 将 monitorSkin 写入 launcher.json:read-modify-write 保留其他键(serverRoot/
-/// startupTimeoutSec/未知键),pretty 序列化,tmp+rename 覆盖写。
+/// 将 monitorSkin 写入 launcher.json:read-modify-write 保留其他键(历史遗留/未知键),pretty 序列化,tmp+rename 覆盖写。
 /// 目标文件:find_launcher_config 命中者优先;均不存在时 dev 写 <gui_root>/config/launcher.json、
 /// release 写 <exe_dir>/config/launcher.json(自动建目录)。
 pub fn persist_monitor_skin(exe_dir: &Path, key: &str) -> Result<(), String> {
@@ -301,58 +249,38 @@ mod tests {
     }
 
     #[test]
-    fn server_root_launcher_json_override() {
-        let root = temp_dir("root-override");
-        let server = root.join("real-server");
+    fn server_root_walk_up_ignores_launcher_json() {
+        let root = temp_dir("root-noread");
+        let server = root.join("srv");
         fs::create_dir_all(&server).unwrap();
         fs::write(server.join("start-wrapper.mjs"), "// marker").unwrap();
-        let exe_dir = root.join("app");
+        let exe_dir = server.join("sub").join("x").join("y");
         fs::create_dir_all(&exe_dir).unwrap();
-        // exe 旁 launcher.json(candidates 第 1 项)
-        fs::write(
-            exe_dir.join("launcher.json"),
-            format!("{{\"serverRoot\": {:?}}}", server.to_string_lossy()),
-        )
-        .unwrap();
+        // exe 旁放含 serverRoot 的 launcher.json:该键已废弃,解析必须忽略它并走 walk-up
+        fs::write(exe_dir.join("launcher.json"), "{\"serverRoot\": \"C:\\\\nowhere\"}").unwrap();
         assert_eq!(resolve_server_root(&exe_dir, 10).unwrap(), server);
     }
 
     #[test]
-    fn server_root_override_invalid_falls_to_walk_up() {
-        let root = temp_dir("root-badoverride");
-        let server = root.join("srv");
-        fs::create_dir_all(&server).unwrap();
-        fs::write(server.join("start-wrapper.mjs"), "// marker").unwrap();
-        let exe_dir = root.join("app");
-        fs::create_dir_all(&exe_dir).unwrap();
-        fs::write(
-            exe_dir.join("launcher.json"),
-            format!("{{\"serverRoot\": {:?}}}", root.join("nowhere").to_string_lossy()),
-        )
-        .unwrap();
-        // 覆盖无效 → 向上查找失败(server 不在 exe 上方)→ Err 且提及覆盖失败原因
-        let err = resolve_server_root(&exe_dir, 10).unwrap_err();
-        assert!(err.contains("launcher.json 覆盖也失败"), "{}", err);
-        assert!(err.contains("nowhere"), "{}", err);
-    }
-
-    #[test]
-    fn launcher_config_reads_monitor_skin() {
+    fn read_monitor_skin_variants() {
         let root = temp_dir("monitor-skin");
         let file = root.join("launcher.json");
+        // 有键 → Some;其他键(历史遗留/未知)不影响
         fs::write(
             &file,
             r#"{"serverRoot": "C:\\srv", "monitorSkin": "user:classic", "other": 1}"#,
         )
         .unwrap();
-        let cfg = parse_launcher_config(&file).unwrap();
-        assert_eq!(cfg.monitor_skin.as_deref(), Some("user:classic"));
-        assert_eq!(cfg.server_root.as_deref(), Some("C:\\srv"));
-        // 缺失/空串 → None
+        assert_eq!(read_monitor_skin(&file).unwrap().as_deref(), Some("user:classic"));
+        // 缺失 → None
         fs::write(&file, r#"{"startupTimeoutSec": 90}"#).unwrap();
-        assert_eq!(parse_launcher_config(&file).unwrap().monitor_skin, None);
+        assert_eq!(read_monitor_skin(&file).unwrap(), None);
+        // 空串 → None
         fs::write(&file, r#"{"monitorSkin": ""}"#).unwrap();
-        assert_eq!(parse_launcher_config(&file).unwrap().monitor_skin, None);
+        assert_eq!(read_monitor_skin(&file).unwrap(), None);
+        // 坏 JSON → Err(由调用方决定回退)
+        fs::write(&file, "not json{").unwrap();
+        assert!(read_monitor_skin(&file).unwrap_err().contains("JSON 解析失败"));
     }
 
     #[test]
@@ -361,8 +289,7 @@ mod tests {
         let file = root.join("launcher.json");
         fs::write(&file, r#"{"serverRoot": "C:\\srv", "custom": {"a": 1}}"#).unwrap();
         persist_monitor_skin(&root, "user:classic").unwrap();
-        let cfg = parse_launcher_config(&file).unwrap();
-        assert_eq!(cfg.monitor_skin.as_deref(), Some("user:classic"));
+        assert_eq!(read_monitor_skin(&file).unwrap().as_deref(), Some("user:classic"));
         // 其他键保留
         let raw = fs::read_to_string(&file).unwrap();
         assert!(raw.contains("C:\\\\srv"), "{}", raw);
@@ -383,7 +310,7 @@ mod tests {
         let file = gui.join("config").join("launcher.json");
         assert!(file.is_file());
         assert_eq!(
-            parse_launcher_config(&file).unwrap().monitor_skin.as_deref(),
+            read_monitor_skin(&file).unwrap().as_deref(),
             Some("official:gauge")
         );
     }

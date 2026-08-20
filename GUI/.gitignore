@@ -13,3 +13,6 @@ src-tauri/gen/
 
 # 用户自定义皮肤(官方皮肤在 skins/,随 git 管理)
 skins-user/
+
+# 用户本地启动器配置(从 config/launcher.json.example 复制创建)
+config/launcher.json

@@ -229,7 +229,7 @@ node GUI/scripts/skin-tool.mjs --help
 
 - 入口:托盘图标右键菜单或监视窗右键菜单 → "**设置**"。
 - 设置窗口以**两列网格**平铺所有皮肤(官方 + 自定义,卡片带来源角标"官方/自定义");预览图按 240x160 显示;无效皮肤显示"无效:原因";当前皮肤高亮。
-- 选中卡片 → 点"**应用**"→ **立即生效**(运行时换肤:重建监视窗,尺寸/透明/置顶等按新配置);同时把 `monitorSkin` 写入 `launcher.json`(**保留其余键**),下次启动沿用。
+- 选中卡片 → 点"**应用**"→ **立即生效**(运行时换肤:重建监视窗,尺寸/透明/置顶等按新配置);同时把 `monitorSkin` 写入 `launcher.json`(**保留其余键**),下次启动沿用。`launcher.json` 是**用户本地文件**(git 不跟踪,从 `config/launcher.json.example` 复制创建)。
 - `launcher.json` 的 `monitorSkin` 键与皮肤键同格式:`"official:classic"`、`"user:my-skin"`、裸 `"classic"`(官方优先)。默认值 `classic`。
 - 写配置失败不影响本次会话(仅记日志),但下次启动会回到旧值。
 

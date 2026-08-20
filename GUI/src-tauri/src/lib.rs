@@ -231,8 +231,7 @@ fn setup_production(
     }
     // 皮肤选择:launcher.json monitorSkin(默认 classic);失败 → 回退内嵌页
     let requested = config_resolver::find_launcher_config(&exe_dir)
-        .and_then(|p| config_resolver::parse_launcher_config(&p).ok())
-        .and_then(|c| c.monitor_skin)
+        .and_then(|p| config_resolver::read_monitor_skin(&p).ok().flatten())
         .unwrap_or_else(|| skin::DEFAULT_SKIN.to_string());
     let (cfg, url, key) = match resolve_startup_skin(&skin_roots, &requested, &logger) {
         Ok(t) => t,
@@ -555,21 +554,7 @@ fn monitor_loop(app: tauri::AppHandle, logger: FileLogger) {
     let state = app.state::<LauncherState>();
     let port = state.port;
 
-    let mut cfg = PollConfig::default();
-    // launcher.json 的 startupTimeoutSec 覆盖(若有)
-    if let Some(lc) = config_resolver::find_launcher_config(&current_exe_dir()) {
-        if let Ok(parsed) = config_resolver::parse_launcher_config(&lc) {
-            if let Some(secs) = parsed.startup_timeout_sec {
-                if secs > 0 {
-                    cfg.total_timeout = Duration::from_secs(secs.min(3600));
-                    logger.info(
-                        "启动超时覆盖",
-                        Some(&format!("startupTimeoutSec={}", secs)),
-                    );
-                }
-            }
-        }
-    }
+    let cfg = PollConfig::default();
 
     let mut child_status = || try_wait_child(&state, &logger);
     match readiness::poll_until_terminal(port, &cfg, &mut child_status) {

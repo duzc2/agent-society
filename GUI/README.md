@@ -33,11 +33,9 @@ cargo tauri build                # 产出 NSIS 安装包(dist/)
 - 发行模式:服务器子进程用**包内 sidecar node.exe**(安装目录下的 `node.exe`,绝不静默回退系统 node,缺失则报错并显示在进度窗)。
 - NSIS 未签名,SmartScreen 会提示,选"更多信息 → 仍要运行"。
 
-## serverRoot 解析(按优先级)
+## 服务器目录解析
 
-1. `launcher.json` 的 `serverRoot`(查找顺序:exe 旁 → exe 旁 `config/` → GUI 项目根 `config/`;相对路径按 launcher.json 所在目录解释);
-2. 从 exe 所在目录向上 ≤10 层找含 `start-wrapper.mjs` 的目录(开发布局直接命中);
-3. 都失败 → 进度窗显示错误(此时可用"重试"按钮在修正配置后重新解析)。
+从 exe 所在目录向上 ≤10 层找含 `start-wrapper.mjs` 的目录(开发布局直接命中);找不到 → 进度窗显示错误(可用"重试"按钮重新解析)。
 
 端口取服务器配置:`config/app.local.json` 优先,否则 `config/app.json`,回退 3000(GUI 不传 `--port`,尊重服务器配置)。
 
@@ -47,7 +45,7 @@ cargo tauri build                # 产出 NSIS 安装包(dist/)
 |---|---|
 | 启动 | 进度窗(无边框/透明/置顶,不确定态动画+已用时)→ 服务器就绪 → 关闭进度窗、打开主窗口与监视窗 |
 | 监视窗口 | 悬浮(无边框/透明/置顶/可拖动),停靠主屏工作区右上角:服务器状态 + 智能体总数 + 工作中数;外观与窗口结构由**皮肤**决定(GUI/skins/ 官方 + GUI/skins-user/ 用户自定义,launcher.json 的 monitorSkin 选择);关闭=隐藏,托盘菜单"监视窗口"可再显隐;右键弹出与托盘**完全相同**的菜单(同一份内容与行为定义) |
-| 设置窗口 | 托盘/监视窗右键菜单"设置"打开:皮肤**两列平铺**展示(240x160 效果图 + 名称 + 来源角标),选中点"应用"**立即生效**并持久化到 launcher.json;关闭=隐藏 |
+| 设置窗口 | 托盘/监视窗右键菜单"设置"打开:皮肤**两列平铺**展示(240x160 效果图 + 名称 + 来源角标),选中点"应用"**立即生效**并持久化到用户本地 launcher.json(git 不跟踪);关闭=隐藏 |
 | 主窗口点关闭 | 仅隐藏,进程与服务器继续运行 |
 | 托盘右键 | 菜单:打开主界面 / 监视窗口 / 退出 |
 | 托盘双击 | 打开主窗口(Windows 专用事件) |
@@ -75,7 +73,7 @@ cargo tauri build                # 产出 NSIS 安装包(dist/)
     - **皮肤身份 = 来源 + 文件夹名**(`official:x`/`user:x`),JSON 无 id;集合由 `GUI/skins/`(git)与 `GUI/skins-user/`(gitignore)子文件夹**动态枚举**,无索引文件;同名文件夹允许并存。皮肤必备 skin.json + preview.png(恰好 240x160)+ index.html;数据经 `window` 的 CustomEvent **`dateUpdate`**(eval 注入,皮肤页不依赖 Tauri API);右键菜单由启动器在 `on_page_load` 统一注入(ui/monitor.js 无自带 contextmenu)。
     - **skin:// 协议**:`register_uri_scheme_protocol` 必须在 `.run()` 前注册;URL 必须 `skin://localhost/<source>/<folder>/...`(wry 导航时改写为 `http://skin.localhost/...`,拦截时 revert 回原样,handler 跨平台统一收到 skin:// 形式);路径安全靠文件夹名白名单 + 拒绝 `.`/`..`/`\`/`:` 段 + 双重 canonicalize + starts_with。
     - **运行时换肤必须重建监视窗**:transparency/阴影等是窗口创建时参数(WS_EX_NOREDIRECTIONBITMAP 创建后设置被静默忽略,见第 12 条),apply_skin = 关旧窗 → 按新配置建新窗(label 不变)→ 恢复可见性;数据经 last_monitor_payload 补发不丢帧。
-    - **monitorSkin 持久化**:apply 时 read-modify-write launcher.json(保留其他键、tmp+rename 原子覆盖);写失败仅影响下次启动,本次会话仍生效。
+    - **monitorSkin 持久化**:apply 时 read-modify-write launcher.json(保留其他键、tmp+rename 原子覆盖);写失败仅影响下次启动,本次会话仍生效。launcher.json 是**用户本地文件**(git 不跟踪,从 `config/launcher.json.example` 复制创建),只承载 monitorSkin;服务器目录解析与启动超时均走内置默认。
     - **调试模式**(`--skin-debug <key>`):跳过单实例插件(与生产实例并存)/托盘/服务器;假数据循环每 10s 随机(server 三态轮换);退出 = 右键"退出调试"/Esc/关窗;`begin_quit` 有 debug 守卫直退。校验/调试工具:`node GUI/scripts/skin-tool.mjs check|list|debug <skin>`,其测试 `cd GUI/scripts && node --test test/skin-tool.test.mjs`(root npm test glob 不覆盖此目录)。
 15. **监视窗口右键菜单 = 托盘菜单的共用实现,四个坑都实测踩过**:
     - **共用方式**:菜单内容与点击行为各只有一处定义(`tray.rs` 的 `build_menu` / `handle_menu_event`)。popup 每次重建菜单实例(muda::Menu 内部是 `Rc<RefCell>` 非 Send,不能放进 managed state)。点击分发**不要**为 popup 另行注册——托盘 `on_menu_event` 注册的是全局监听器(tauri tray/mod.rs 注释:"called for any menu event, ... from the tray icon menu"),popup 点击自动走同一分发,再注册会双份触发。
