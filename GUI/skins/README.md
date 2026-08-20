@@ -10,7 +10,7 @@
 - **全部视觉**(背景、文字、图形、动画)由 `index.html`(可带 css/js/图片等任意资源)实现;
 - **数据**由启动器通过全局 DOM 事件 `dateUpdate` 推送给页面。
 
-皮肤页面**不得依赖 Tauri API**(`window.__TAURI__` 等);右键菜单由启动器统一注入,皮肤无需(也不应)自行实现。
+皮肤页面**不得依赖 Tauri API**(`window.__TAURI__` 等);右键菜单与双击兜底由启动器统一注入,皮肤无需(也不应)自行实现。
 
 ## 2. 目录与必备文件
 
@@ -74,6 +74,7 @@ classic/
 
 - 坐标单位 = 窗口逻辑像素,原点左上角(与 `width`/`height` 同一坐标系);
 - **区域内拖拽**:鼠标事件只会到达命中区域内的页面。建议皮肤把可拖拽容器标 `data-tauri-drag-region="deep"`(子树任意后代按下左键都拖拽;**裸属性只对元素自身生效**,点在文字/图形等子元素上不会拖——三款官方皮肤均已用 `deep`)。皮肤没有任何标记时,启动器兜底为**拖拽移动悬浮窗**;可交互元素(A/BUTTON/INPUT/SELECT/TEXTAREA/LABEL/SUMMARY、可交互 role)、`data-tauri-drag-region="false"` 的显式禁用、以及皮肤对 `mousedown` 调 `preventDefault`,兜底都会让位;
+- **区域内双击**:皮肤未在 `dblclick` 上调 `preventDefault` 时,启动器兜底为**切换主窗口显隐**;皮肤要自己处理双击(如双击按钮有专属动作),在 `dblclick` 监听里调 `preventDefault` 即让兜底让位;
 - 两种形状:
   - `ellipse`:椭圆(圆形取 `rx == ry`);
   - `path`:SVG path `d` 子集(`M m L l H h V v Z z C c Q q A a`),按偶奇填充规则判定(嵌套子路径自动成孔);
@@ -230,8 +231,9 @@ node GUI/scripts/skin-tool.mjs --help
 - 入口:托盘图标右键菜单或监视窗右键菜单 → "**设置**"。
 - 设置窗口以**两列网格**平铺所有皮肤(官方 + 自定义,卡片带来源角标"官方/自定义");预览图按 240x160 显示;无效皮肤显示"无效:原因";当前皮肤高亮。
 - 选中卡片 → 点"**应用**"→ **立即生效**(运行时换肤:重建监视窗,尺寸/透明/置顶等按新配置);同时把 `monitorSkin` 写入 `launcher.json`(**保留其余键**),下次启动沿用。`launcher.json` 是**用户本地文件**(git 不跟踪,从 `config/launcher.json.example` 复制创建)。
-- `launcher.json` 的 `monitorSkin` 键与皮肤键同格式:`"official:classic"`、`"user:my-skin"`、裸 `"classic"`(官方优先)。默认值 `classic`。
+- `launcher.json` 的 `monitorSkin` 键与皮肤键同格式:`"official:classic"`、`"user:my-skin"`、裸 `"classic"`(官方优先)。默认值 `classic`。另有 `monitorWindowPos`(`{"x": .., "y": ..}`,物理像素)——悬浮窗上次退出时的位置,启动器退出时自动写入、启动时恢复(位置已不可见时回退右上角停靠)。
 - 写配置失败不影响本次会话(仅记日志),但下次启动会回到旧值。
+- **换肤保留悬浮窗位置**:运行时换肤重建监视窗会沿用当前位置(不跳回右上角停靠)。
 
 ## 9. 打包与发布
 

@@ -54,16 +54,29 @@ pub fn dock_top_right(work: (i32, i32, u32, u32), scale: f64, width: f64, margin
     (x, y)
 }
 
-/// 悬浮监视窗口:无边框 + 皮肤配置的尺寸/透明/置顶,停靠主显示器工作区右上角。
+/// 判断物理坐标点是否落在任一显示器工作区内(工作区 = 屏幕减任务栏)。
+/// 保存的悬浮窗位置在显示器被拔掉/分辨率变化后可能完全不可见,此时回退停靠。
+/// 用 i64 比较防 u32 加 i32 溢出。
+pub fn pos_visible_on_work_areas(pos: (i32, i32), areas: &[(i32, i32, u32, u32)]) -> bool {
+    areas.iter().any(|&(x, y, w, h)| {
+        let (px, py) = (pos.0 as i64, pos.1 as i64);
+        px >= x as i64 && px < x as i64 + w as i64 && py >= y as i64 && py < y as i64 + h as i64
+    })
+}
+
+/// 悬浮监视窗口:无边框 + 皮肤配置的尺寸/透明/置顶。
+/// 位置:saved_pos(上次退出保存的物理像素,须仍落在某显示器工作区内)优先,
+/// 否则停靠主显示器工作区右上角;无显示器信息时用系统默认位置。
 /// 页面加载完成后统一注入右键菜单脚本(皮肤页与内嵌回退页同机制),并补发最近一次数据。
 pub fn create_monitor_window(
     app: &tauri::AppHandle,
     cfg: &SkinConfig,
     url: tauri::WebviewUrl,
     debug: bool,
+    saved_pos: Option<(i32, i32)>,
 ) -> tauri::Result<tauri::WebviewWindow> {
     let logger = app.state::<FileLogger>().inner().clone();
-    let mut builder = tauri::WebviewWindowBuilder::new(app, "monitor", url)
+    let builder = tauri::WebviewWindowBuilder::new(app, "monitor", url)
         .title(if debug {
             format!("皮肤调试 - {}", cfg.name)
         } else {
@@ -77,25 +90,20 @@ pub fn create_monitor_window(
         .skip_taskbar(cfg.skip_taskbar)
         .resizable(cfg.resizable)
         .visible(false);
-    // 停靠工作区右上角(避开任务栏,按皮肤宽度重算);无显示器信息时用系统默认位置
-    if let Some(monitor) = app.primary_monitor().ok().flatten() {
-        let work = monitor.work_area();
-        let (x, y) = dock_top_right(
-            (work.position.x, work.position.y, work.size.width, work.size.height),
-            monitor.scale_factor(),
-            cfg.width,
-            12.0,
-        );
-        builder = builder.position(x, y);
-    } else {
-        logger.warn("无法获取主显示器,监视窗口使用系统默认位置", None);
-    }
     let inject = if debug {
         skin::debug_script(&cfg.hit_region)
     } else {
         skin::production_script()
     };
-    let builder = builder.on_page_load(move |window, _payload| {
+    let builder = builder.on_page_load(move |window, payload| {
+        // wry 0.55.1 把 WebView2 的 ContentLoading 与 NavigationCompleted **都**映射为
+        // PageLoad 事件(Started/Finished),tauri 的 on_page_load 对一次页面加载执行两次:
+        // 只在 Finished(导航完成)注入——此时页面脚本已解析完、监听已注册,注入与
+        // 首帧补发各恰好一次;Started 时新文档还是空的,注入无意义且会与 Finished
+        // 那次在**同一文档**上重复注册监听器(实测:双击切换主窗口连切两次,show→hide 互抵)。
+        if payload.event() != tauri::webview::PageLoadEvent::Finished {
+            return;
+        }
         if let Err(e) = window.eval(inject.as_str()) {
             let logger = window.app_handle().state::<FileLogger>().inner().clone();
             logger.error(
@@ -107,6 +115,43 @@ pub fn create_monitor_window(
         crate::push_last_monitor_payload(window.app_handle());
     });
     let window = builder.build()?;
+    // 定位(set_position 是投递不阻塞,主线程 setup 与异步线程换肤均可安全调用):
+    // 恢复位置须仍落在某工作区内(显示器被拔掉时回退停靠)
+    let monitors: Vec<(i32, i32, u32, u32)> = app
+        .available_monitors()
+        .map(|ms| {
+            ms.iter()
+                .map(|m| {
+                    let a = m.work_area();
+                    (a.position.x, a.position.y, a.size.width, a.size.height)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let positioned: tauri::Result<()> =
+        match saved_pos.filter(|p| pos_visible_on_work_areas(*p, &monitors)) {
+            Some((x, y)) => window.set_position(tauri::PhysicalPosition::new(x, y)),
+            None => match app.primary_monitor().ok().flatten() {
+                Some(monitor) => {
+                    // 停靠工作区右上角(避开任务栏,按皮肤宽度重算)
+                    let work = monitor.work_area();
+                    let (x, y) = dock_top_right(
+                        (work.position.x, work.position.y, work.size.width, work.size.height),
+                        monitor.scale_factor(),
+                        cfg.width,
+                        12.0,
+                    );
+                    window.set_position(tauri::LogicalPosition::new(x, y))
+                }
+                None => {
+                    logger.warn("无法获取主显示器,监视窗口使用系统默认位置", None);
+                    Ok(())
+                }
+            },
+        };
+    if let Err(e) = positioned {
+        logger.error(&format!("设置监视窗口位置失败: {}", e), None);
+    }
     // 命中区域子类化:区域外点击穿透(整窗区域时 apply 内部直接跳过)
     #[cfg(windows)]
     crate::hit_test::apply(app, &window, &cfg.hit_region);
@@ -120,12 +165,13 @@ pub fn show_monitor(app: &tauri::AppHandle) {
             if let Err(e) = w.show() {
                 logger.error(&format!("显示监视窗口失败: {}", e), None);
             }
+            crate::tray::sync_menu_labels(app); // 托盘菜单文案随显隐切换(调试模式无托盘,自动跳过)
         }
         None => logger.error("监视窗口不存在,无法显示", None),
     }
 }
 
-/// 托盘"监视窗口"项:可见则隐藏,隐藏则显示。
+/// 托盘/菜单"打开/关闭悬浮窗"项:可见则隐藏,隐藏则显示。
 pub fn toggle_monitor(app: &tauri::AppHandle) {
     let logger = app.state::<FileLogger>().inner().clone();
     match app.get_webview_window("monitor") {
@@ -135,6 +181,7 @@ pub fn toggle_monitor(app: &tauri::AppHandle) {
             if let Err(e) = action {
                 logger.error(&format!("切换监视窗口失败: {}", e), None);
             }
+            crate::tray::sync_menu_labels(app);
         }
         None => logger.error("监视窗口不存在,无法切换", None),
     }
@@ -239,7 +286,7 @@ pub fn dispatch_hit_overlay_toggle(app: &tauri::AppHandle, visible: bool) {
     }
 }
 
-/// 显示主窗口(托盘菜单/双击/单实例唤起共用);窗口未创建时记日志不动作。
+/// 显示主窗口(托盘双击/单实例唤起/就绪后打开/切换打开共用);窗口未创建时记日志不动作。
 pub fn show_main(app: &tauri::AppHandle) {
     let logger = app.state::<FileLogger>().inner().clone();
     match app.get_webview_window("main") {
@@ -253,14 +300,33 @@ pub fn show_main(app: &tauri::AppHandle) {
             if let Err(e) = w.set_focus() {
                 logger.error(&format!("主窗口聚焦失败: {}", e), None);
             }
+            crate::tray::sync_menu_labels(app);
         }
         None => logger.info("主窗口尚未创建,忽略唤起", None),
     }
 }
 
+/// 切换主窗口(菜单"打开/关闭主窗口"项与双击悬浮窗兜底共用):
+/// 可见则隐藏,隐藏则显示(复用 show_main 的唤起逻辑)。
+pub fn toggle_main(app: &tauri::AppHandle) {
+    let logger = app.state::<FileLogger>().inner().clone();
+    match app.get_webview_window("main") {
+        Some(w) if w.is_visible().unwrap_or(false) => {
+            if let Err(e) = w.hide() {
+                logger.error(&format!("隐藏主窗口失败: {}", e), None);
+            } else {
+                logger.info("主窗口已隐藏(菜单切换/双击悬浮窗)", None);
+            }
+            crate::tray::sync_menu_labels(app);
+        }
+        Some(_) => show_main(app), // show_main 末尾自带菜单文案同步
+        None => logger.info("主窗口尚未创建,忽略切换", None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::dock_top_right;
+    use super::{dock_top_right, pos_visible_on_work_areas};
 
     #[test]
     fn dock_top_right_math() {
@@ -272,5 +338,22 @@ mod tests {
         assert_eq!(dock_top_right((100, 50, 1920, 1080), 1.0, 240.0, 12.0), (1768.0, 62.0));
         // 1.25 缩放:1920/1.25=1536,1536-300-12=1224
         assert_eq!(dock_top_right((0, 0, 1920, 1080), 1.25, 300.0, 12.0), (1224.0, 12.0));
+    }
+
+    #[test]
+    fn pos_visible_on_work_areas_math() {
+        let primary = (0, 0, 1920, 1080);
+        // 主屏内
+        assert!(pos_visible_on_work_areas((100, 100), &[primary]));
+        // 边界:左上角含、右下角不含(半开区间)
+        assert!(pos_visible_on_work_areas((0, 0), &[primary]));
+        assert!(!pos_visible_on_work_areas((1920, 1080), &[primary]));
+        // 副屏在左侧(负坐标):点落在副屏即有效
+        let secondary = (-1920, 0, 1920, 1080);
+        assert!(pos_visible_on_work_areas((-100, 50), &[primary, secondary]));
+        // 显示器被拔掉:点不在任何工作区 → 回退停靠
+        assert!(!pos_visible_on_work_areas((-100, 50), &[primary]));
+        // 空列表(枚举失败)→ 视为不可见
+        assert!(!pos_visible_on_work_areas((0, 0), &[]));
     }
 }

@@ -44,10 +44,10 @@ cargo tauri build                # 产出 NSIS 安装包(dist/)
 | 操作 | 行为 |
 |---|---|
 | 启动 | 进度窗(无边框/透明/置顶,不确定态动画+已用时)→ 服务器就绪 → 关闭进度窗、打开主窗口与监视窗 |
-| 监视窗口 | 悬浮(无边框/透明/置顶/可拖动),停靠主屏工作区右上角:服务器状态 + 智能体总数 + 工作中数;外观与窗口结构由**皮肤**决定(GUI/skins/ 官方 + GUI/skins-user/ 用户自定义,launcher.json 的 monitorSkin 选择);关闭=隐藏,托盘菜单"监视窗口"可再显隐;右键弹出与托盘**完全相同**的菜单(同一份内容与行为定义) |
+| 监视窗口 | 悬浮(无边框/透明/置顶/可拖动),停靠主屏工作区右上角:服务器状态 + 智能体总数 + 工作中数;外观与窗口结构由**皮肤**决定(GUI/skins/ 官方 + GUI/skins-user/ 用户自定义,launcher.json 的 monitorSkin 选择);关闭=隐藏,托盘菜单"监视窗口"可再显隐;右键弹出与托盘**完全相同**的菜单(同一份内容与行为定义);**双击悬浮窗**(皮肤未处理时)切换主窗口显隐;退出时保存位置,下次启动恢复(位置已不可见时回退右上角停靠) |
 | 设置窗口 | 托盘/监视窗右键菜单"设置"打开:皮肤**两列平铺**展示(240x160 效果图 + 名称 + 来源角标),选中点"应用"**立即生效**并持久化到用户本地 launcher.json(git 不跟踪);关闭=隐藏 |
 | 主窗口点关闭 | 仅隐藏,进程与服务器继续运行 |
-| 托盘右键 | 菜单:打开主界面 / 监视窗口 / 退出 |
+| 托盘右键 | 菜单:打开/关闭主窗口 · 打开/关闭悬浮窗 · 设置 · 退出(前两项文案随窗口显隐动态切换,点"关闭主窗口"= 隐藏主窗口) |
 | 托盘双击 | 打开主窗口(Windows 专用事件) |
 | 托盘"退出" | 优雅停止服务器(≤60s)→ 退出;若服务器非本 GUI 启动(端口预占),不停止、直接退出 |
 | 重复启动 | 单实例:第二个实例立即退出,并唤起已有实例的主窗口 |
@@ -72,14 +72,16 @@ cargo tauri build                # 产出 NSIS 安装包(dist/)
 14. **皮肤系统关键事实(换肤 = 重建窗口,勿改)**:
     - **皮肤身份 = 来源 + 文件夹名**(`official:x`/`user:x`),JSON 无 id;集合由 `GUI/skins/`(git)与 `GUI/skins-user/`(gitignore)子文件夹**动态枚举**,无索引文件;同名文件夹允许并存。皮肤必备 skin.json + preview.png(恰好 240x160)+ index.html;数据经 `window` 的 CustomEvent **`dateUpdate`**(eval 注入,皮肤页不依赖 Tauri API);右键菜单由启动器在 `on_page_load` 统一注入(ui/monitor.js 无自带 contextmenu)。
     - **skin:// 协议**:`register_uri_scheme_protocol` 必须在 `.run()` 前注册;URL 必须 `skin://localhost/<source>/<folder>/...`(wry 导航时改写为 `http://skin.localhost/...`,拦截时 revert 回原样,handler 跨平台统一收到 skin:// 形式);路径安全靠文件夹名白名单 + 拒绝 `.`/`..`/`\`/`:` 段 + 双重 canonicalize + starts_with。
-    - **运行时换肤必须重建监视窗**:transparency/阴影等是窗口创建时参数(WS_EX_NOREDIRECTIONBITMAP 创建后设置被静默忽略,见第 12 条),apply_skin = 关旧窗 → 按新配置建新窗(label 不变)→ 恢复可见性;数据经 last_monitor_payload 补发不丢帧。
-    - **monitorSkin 持久化**:apply 时 read-modify-write launcher.json(保留其他键、tmp+rename 原子覆盖);写失败仅影响下次启动,本次会话仍生效。launcher.json 是**用户本地文件**(git 不跟踪,从 `config/launcher.json.example` 复制创建),只承载 monitorSkin;服务器目录解析与启动超时均走内置默认。
+    - **运行时换肤必须重建监视窗**:transparency/阴影等是窗口创建时参数(WS_EX_NOREDIRECTIONBITMAP 创建后设置被静默忽略,见第 12 条),apply_skin = 关旧窗 → 按新配置建新窗(label 不变)→ 恢复可见性与**物理位置**(换肤不跳回停靠点);数据经 last_monitor_payload 补发不丢帧。
+    - **monitorSkin / monitorWindowPos 持久化**:apply/退出时 read-modify-write launcher.json(保留其他键、tmp+rename 原子覆盖,骨架为 config_resolver::update_launcher_json);写失败仅影响下次启动,本次会话仍生效。launcher.json 是**用户本地文件**(git 不跟踪,从 `config/launcher.json.example` 复制创建),只承载 monitorSkin 与 monitorWindowPos;服务器目录解析与启动超时均走内置默认。位置恢复前校验仍落在某显示器工作区内(显示器被拔掉回退右上角停靠)。
+    - **监视窗注入只在 PageLoadEvent::Finished 执行**:wry 0.55.1 把 WebView2 的 ContentLoading 与 NavigationCompleted **都**映射为 PageLoad 事件,tauri 的 on_page_load 对一次页面加载执行**两次**(Started + Finished)——不过滤的话同一文档上重复 eval,监听器双注册(实测:双击切换主窗口连切两次,show→hide 互抵)。`windows.rs` 的 on_page_load 以 `payload.event() == Finished` 过滤,注入与首帧补发各恰好一次(Finished 时皮肤自身脚本已解析完)。**不要移除该过滤或加第二条注入路径。**
     - **调试模式**(`--skin-debug <key>`):跳过单实例插件(与生产实例并存)/托盘/服务器;假数据循环每 10s 随机(server 三态轮换);退出 = 右键"退出调试"/Esc/关窗;`begin_quit` 有 debug 守卫直退。校验/调试工具:`node GUI/scripts/skin-tool.mjs check|list|debug <skin>`,其测试 `cd GUI/scripts && node --test test/skin-tool.test.mjs`(root npm test glob 不覆盖此目录)。
 15. **监视窗口右键菜单 = 托盘菜单的共用实现,四个坑都实测踩过**:
     - **共用方式**:菜单内容与点击行为各只有一处定义(`tray.rs` 的 `build_menu` / `handle_menu_event`)。popup 每次重建菜单实例(muda::Menu 内部是 `Rc<RefCell>` 非 Send,不能放进 managed state)。点击分发**不要**为 popup 另行注册——托盘 `on_menu_event` 注册的是全局监听器(tauri tray/mod.rs 注释:"called for any menu event, ... from the tray icon menu"),popup 点击自动走同一分发,再注册会双份触发。
     - **popup 必须是 async 命令**:同步命令在 invoke 到达的主线程上内联执行(tauri-macros body_blocking: `let result = $path(...)`),而 build_menu/popup_menu 内部的 `run_item_main_thread!` 是"向主线程投递 + 阻塞等待"——主线程上调用等于自己等自己,永久死锁(实测整个主线程冻结、后续所有 IPC 排队)。async 命令跑在 async_runtime 线程池,投递-等待的双方不在同一线程。tauri 官方 menu 插件的 popup 命令同为 async,同一原因。
     - **菜单定位用 `popup_menu_at` + JS 传的点击坐标**(`event.clientX/Y` → `LogicalPosition`,muda 内部做 DPI 转换 + ClientToScreen,钉在点击点)。不要用无参 `popup_menu`(内部 `GetCursorPos` 定位):右键后用户光标一动,菜单就弹到错误位置。
     - **重入守卫**:菜单开着时再次右键,新 invoke 的 popup 任务会被 TrackPopupMenu 的 modal loop 泵出 → 嵌套菜单级联。`commands.rs` 里 `POPUP_ACTIVE` 原子布尔在弹出期间忽略后续请求。
+    - **菜单文案动态 = 显隐变化后重建托盘菜单**:popup 每次弹出重建天然跟随当前状态;托盘菜单只建一次,显隐变化由 `windows.rs` 的 show_main/show_monitor/toggle_monitor/toggle_main 与 CloseRequested 隐藏分支统一调 `tray::sync_menu_labels` 重建。重建必须 spawn 线程——build_menu/set_menu 内部 `run_item_main_thread!`(投递主线程 + 阻塞等待),主线程回调(菜单点击/托盘双击/关闭按钮)里直接调用自己等自己死锁,与 popup 必须 async 同一原因。
     - **测试教训**:本机(Win11 26200)上跨进程 `EnumWindows` 枚举不到任何菜单窗口(阳性对照:同一进程内确定开着的 TrackPopupMenu 菜单,跨进程枚举不可见)——菜单可见性无法用跨进程窗口枚举验证,应以"弹出持续时间日志(modal loop 时长)+ 用户实际操作"为证据。
 
 ## 已知权衡与限制

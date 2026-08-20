@@ -8,7 +8,8 @@
 //!   集合完全由两个文件夹的子文件夹动态枚举,无索引文件。
 //! - 皮肤文件夹必备三件:skin.json + preview.png(恰好 240×160,由校验脚本强校验)+ index.html。
 //! - 数据契约:皮肤页监听 window 上的 CustomEvent "dateUpdate"(detail 携带数据),不依赖 Tauri API;
-//!   右键菜单由启动器在 on_page_load 时统一注入(见 CONTEXTMENU_SCRIPT / DEBUG_SCRIPT)。
+//!   右键菜单与双击兜底由启动器在 on_page_load 时统一注入
+//!   (见 CONTEXTMENU_SCRIPT / DBLCLICK_TOGGLE_SCRIPT / DEBUG_SCRIPT)。
 
 use crate::hit_region::HitRegion;
 use serde::Serialize;
@@ -565,9 +566,25 @@ const DRAG_FALLBACK_SCRIPT: &str = r#"
 })();
 "#;
 
-/// 生产模式注入脚本:右键菜单 + 拖拽兜底。
+/// 双击兜底:皮肤未处理 dblclick(未 preventDefault)时切换主窗口显隐。
+/// 捕获阶段先登记、下一宏任务再检查——保证页面任何阶段注册的处理函数都已
+/// 运行完毕;"皮肤已处理"的判定与拖拽兜底同一契约:对事件调 preventDefault。
+const DBLCLICK_TOGGLE_SCRIPT: &str = r#"
+window.addEventListener("dblclick", function (event) {
+  setTimeout(function () {
+    if (!event.defaultPrevented) {
+      window.__TAURI__.core.invoke("monitor_toggle_main").catch(function () {});
+    }
+  }, 0);
+}, true);
+"#;
+
+/// 生产模式注入脚本:右键菜单 + 拖拽兜底 + 双击切换主窗口兜底。
+/// 注入只应发生一次(windows.rs 的 on_page_load 仅在 PageLoadEvent::Finished 时
+/// 执行——wry 把 ContentLoading 与 NavigationCompleted 都映射为 PageLoad,
+/// 不过滤会同一文档重复注册监听器,见 README 维护者须知第 14 条)。
 pub fn production_script() -> String {
-    format!("{}\n{}", CONTEXTMENU_SCRIPT, DRAG_FALLBACK_SCRIPT)
+    format!("{}\n{}\n{}", CONTEXTMENU_SCRIPT, DRAG_FALLBACK_SCRIPT, DBLCLICK_TOGGLE_SCRIPT)
 }
 
 /// 调试模式注入:右键 → 单条"退出调试"菜单;Esc 直接退出。
@@ -805,6 +822,14 @@ mod tests {
         assert!(s.contains("\"deep\""), "兜底必须识别 deep 子树拖拽");
         assert!(s.contains("\"false\""), "兜底必须尊重显式禁用");
         assert!(s.contains("defaultPrevented"), "皮肤 preventDefault 时兜底必须让位");
+    }
+
+    #[test]
+    fn production_script_has_dblclick_toggle() {
+        let s = production_script();
+        assert!(s.contains("dblclick"), "生产注入必须含双击兜底");
+        assert!(s.contains("monitor_toggle_main"), "双击兜底必须调用切换主窗口命令");
+        assert!(s.contains("defaultPrevented"), "皮肤 preventDefault 时双击兜底必须让位");
     }
 
     #[test]

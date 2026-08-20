@@ -1,7 +1,7 @@
-//! 服务器根目录、端口与本地皮肤设置解析,纯函数便于单测:
+//! 服务器根目录、端口与本地设置解析,纯函数便于单测:
 //! - serverRoot: 从 exe 向上查找含 start-wrapper.mjs 的目录(≤10 层)
 //! - httpPort: 镜像服务器 config.js loadApp 的优先级(config/app.local.json > config/app.json > 默认 3000)
-//! - monitorSkin: 用户本地文件 launcher.json(git 不跟踪,从 .example 复制创建)
+//! - monitorSkin / monitorWindowPos: 用户本地文件 launcher.json(git 不跟踪,从 .example 复制创建)
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -96,10 +96,11 @@ pub fn resolve_http_port(server_root: &Path) -> (u16, String) {
     )
 }
 
-/// 将 monitorSkin 写入 launcher.json:read-modify-write 保留其他键(历史遗留/未知键),pretty 序列化,tmp+rename 覆盖写。
-/// 目标文件:find_launcher_config 命中者优先;均不存在时 dev 写 <gui_root>/config/launcher.json、
-/// release 写 <exe_dir>/config/launcher.json(自动建目录)。
-pub fn persist_monitor_skin(exe_dir: &Path, key: &str) -> Result<(), String> {
+/// launcher.json 的 read-modify-write 骨架:目标文件选择、保留其他键(历史遗留/未知键)、
+/// pretty 序列化、tmp+rename 原子覆盖。monitorSkin 与 monitorWindowPos 共用
+/// (文件是同一个用户本地文件)。目标文件:find_launcher_config 命中者优先;均不存在时
+/// dev 写 <gui_root>/config/launcher.json、release 写 <exe_dir>/config/launcher.json(自动建目录)。
+fn update_launcher_json(exe_dir: &Path, mutate: impl FnOnce(&mut Value)) -> Result<(), String> {
     let target = match find_launcher_config(exe_dir) {
         Some(p) => p,
         None => {
@@ -120,7 +121,7 @@ pub fn persist_monitor_skin(exe_dir: &Path, key: &str) -> Result<(), String> {
     if !value.is_object() {
         return Err(format!("{} 顶层必须是 JSON 对象", target.display()));
     }
-    value["monitorSkin"] = Value::String(key.to_string());
+    mutate(&mut value);
     let pretty =
         serde_json::to_string_pretty(&value).map_err(|e| format!("序列化失败: {}", e))?;
     let tmp = target.with_extension("json.tmp");
@@ -136,6 +137,46 @@ pub fn persist_monitor_skin(exe_dir: &Path, key: &str) -> Result<(), String> {
         )
     })?;
     Ok(())
+}
+
+/// 将 monitorSkin 写入 launcher.json(read-modify-write,保留其他键)。
+pub fn persist_monitor_skin(exe_dir: &Path, key: &str) -> Result<(), String> {
+    update_launcher_json(exe_dir, |v| {
+        v["monitorSkin"] = Value::String(key.to_string());
+    })
+}
+
+/// 读取 launcher.json 的 monitorWindowPos(物理像素,上次优雅退出时保存)。
+/// 键缺失 → Ok(None);键存在但结构/取值非法 → Err(调用方记日志并回退停靠)。
+pub fn read_window_pos(path: &Path) -> Result<Option<(i32, i32)>, String> {
+    let raw =
+        std::fs::read_to_string(path).map_err(|e| format!("读取 {} 失败: {}", path.display(), e))?;
+    let v: Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("{} JSON 解析失败: {}", path.display(), e))?;
+    let Some(pos) = v.get("monitorWindowPos") else {
+        return Ok(None);
+    };
+    let err = |what: &str| format!("{} 的 monitorWindowPos 非法: {}", path.display(), what);
+    let x = pos
+        .get("x")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| err("x 缺失或非数字"))?;
+    let y = pos
+        .get("y")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| err("y 缺失或非数字"))?;
+    // 多显示器布局下坐标为负/超主屏很正常,只挡明显越界(非有限/±10 万逻辑像素)
+    if !x.is_finite() || !y.is_finite() || x.abs() > 100000.0 || y.abs() > 100000.0 {
+        return Err(err("坐标越界(允许 |值| ≤ 100000)"));
+    }
+    Ok(Some((x as i32, y as i32)))
+}
+
+/// 将 monitorWindowPos(物理像素)写入 launcher.json(read-modify-write,保留其他键)。
+pub fn persist_window_pos(exe_dir: &Path, x: i32, y: i32) -> Result<(), String> {
+    update_launcher_json(exe_dir, |v| {
+        v["monitorWindowPos"] = serde_json::json!({ "x": x, "y": y });
+    })
 }
 
 /// 只提取 httpPort 字段(u64 整数、1..=65535),不反序列化整个配置,
@@ -281,6 +322,46 @@ mod tests {
         // 坏 JSON → Err(由调用方决定回退)
         fs::write(&file, "not json{").unwrap();
         assert!(read_monitor_skin(&file).unwrap_err().contains("JSON 解析失败"));
+    }
+
+    #[test]
+    fn read_window_pos_variants() {
+        let root = temp_dir("window-pos");
+        let file = root.join("launcher.json");
+        // 有效(含负坐标,多显示器布局常见)
+        fs::write(&file, r#"{"monitorWindowPos": {"x": 120, "y": -80}}"#).unwrap();
+        assert_eq!(read_window_pos(&file).unwrap(), Some((120, -80)));
+        // 键缺失 → None
+        fs::write(&file, r#"{"monitorSkin": "classic"}"#).unwrap();
+        assert_eq!(read_window_pos(&file).unwrap(), None);
+        // 键存在但非法 → Err(响亮失败,调用方回退停靠)
+        for bad in [
+            r#"{"monitorWindowPos": {"x": 1}}"#,
+            r#"{"monitorWindowPos": {"x": "a", "y": 1}}"#,
+            r#"{"monitorWindowPos": {"x": 1e20, "y": 1}}"#,
+            r#"{"monitorWindowPos": 5}"#,
+        ] {
+            fs::write(&file, bad).unwrap();
+            assert!(read_window_pos(&file).unwrap_err().contains("monitorWindowPos"), "{}", bad);
+        }
+        // 坏 JSON → Err
+        fs::write(&file, "not json{").unwrap();
+        assert!(read_window_pos(&file).unwrap_err().contains("JSON 解析失败"));
+    }
+
+    #[test]
+    fn persist_window_pos_preserves_skin_and_roundtrips() {
+        let root = temp_dir("persist-pos");
+        let file = root.join("launcher.json");
+        fs::write(&file, r#"{"monitorSkin": "official:gauge"}"#).unwrap();
+        persist_window_pos(&root, 1608, 12).unwrap();
+        assert_eq!(read_window_pos(&file).unwrap(), Some((1608, 12)));
+        assert_eq!(read_monitor_skin(&file).unwrap().as_deref(), Some("official:gauge"));
+        // 再写皮肤,位置保留
+        persist_monitor_skin(&root, "official:minimal").unwrap();
+        assert_eq!(read_window_pos(&file).unwrap(), Some((1608, 12)));
+        assert_eq!(read_monitor_skin(&file).unwrap().as_deref(), Some("official:minimal"));
+        assert!(!root.join("launcher.json.tmp").exists());
     }
 
     #[test]

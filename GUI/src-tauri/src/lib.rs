@@ -155,6 +155,7 @@ pub fn run() {
             commands::launcher_exit,
             commands::monitor_context_menu,
             commands::monitor_start_drag,
+            commands::monitor_toggle_main,
             commands::skin_debug_menu,
             commands::skin_debug_exit,
             commands::settings_get,
@@ -179,6 +180,10 @@ pub fn run() {
                     let logger = window.app_handle().state::<FileLogger>().inner().clone();
                     if let Err(e) = window.hide() {
                         logger.error(&format!("窗口关闭→隐藏失败: {}", e), None);
+                    }
+                    // 主窗口/悬浮窗显隐影响菜单文案;设置窗口隐藏不影响,跳过
+                    if matches!(window.label(), "main" | "monitor") {
+                        tray::sync_menu_labels(window.app_handle());
                     }
                 }
             }
@@ -248,7 +253,19 @@ fn setup_production(
         let state = app.state::<LauncherState>();
         *state.current_skin.lock().unwrap() = key;
     }
-    match windows::create_monitor_window(app.handle(), &cfg, url, false) {
+    // 悬浮窗位置:launcher.json monitorWindowPos(上次退出保存,物理像素);
+    // 缺失 → 右上角停靠;解析失败记日志回退停靠(见 create_monitor_window 的校验)
+    let saved_pos = match config_resolver::find_launcher_config(&exe_dir) {
+        Some(p) => match config_resolver::read_window_pos(&p) {
+            Ok(pos) => pos,
+            Err(e) => {
+                logger.error("monitorWindowPos 解析失败,回退右上角停靠", Some(&e));
+                None
+            }
+        },
+        None => None,
+    };
+    match windows::create_monitor_window(app.handle(), &cfg, url, false, saved_pos) {
         Ok(_) => logger.info("监视窗口已创建(隐藏,就绪后显示)", None),
         Err(e) => logger.error(&format!("创建监视窗口失败: {}", e), None),
     }
@@ -299,7 +316,7 @@ fn setup_skin_debug(
             "total": 42, "working": 17, "server": "up", "updated": true
         }));
     }
-    windows::create_monitor_window(app.handle(), &cfg, url, true)?;
+    windows::create_monitor_window(app.handle(), &cfg, url, true, None)?;
     windows::show_monitor(app.handle());
     std::thread::spawn({
         let app = app.handle().clone();
@@ -373,8 +390,13 @@ pub(crate) fn push_last_monitor_payload(app: &tauri::AppHandle) {
 }
 
 /// 换肤失败回退:按 state.current_skin 原样重建监视窗并恢复可见性。
+/// saved_pos = 销毁前记录的物理位置(换肤不应改变悬浮窗位置)。
 /// 返回 Some(()) 成功 / None 失败(记日志)。
-fn rebuild_current_monitor(app: &tauri::AppHandle, visible: bool) -> Option<()> {
+fn rebuild_current_monitor(
+    app: &tauri::AppHandle,
+    visible: bool,
+    saved_pos: Option<(i32, i32)>,
+) -> Option<()> {
     let logger = app.state::<FileLogger>().inner().clone();
     let key = {
         let state = app.state::<LauncherState>();
@@ -410,7 +432,7 @@ fn rebuild_current_monitor(app: &tauri::AppHandle, visible: bool) -> Option<()> 
             }
         }
     };
-    match windows::create_monitor_window(app, &cfg, url, false) {
+    match windows::create_monitor_window(app, &cfg, url, false, saved_pos) {
         Ok(w) => {
             if visible {
                 if let Err(e) = w.show() {
@@ -451,13 +473,17 @@ pub(crate) fn apply_skin(app: &tauri::AppHandle, key: &str) -> Result<(), String
             return Ok(());
         }
     }
-    // 重建窗口:记录可见性 → 销毁旧窗(必须用 destroy——close() 会被全局
-    // CloseRequested 钩子 prevent_close 拦截,窗口不销毁、label 被占用)→
-    // 按新配置建新窗 → 恢复可见性。
+    // 重建窗口:记录可见性与物理位置(换肤不应改变悬浮窗位置)→ 销毁旧窗
+    // (必须用 destroy——close() 会被全局 CloseRequested 钩子 prevent_close 拦截,
+    // 窗口不销毁、label 被占用)→ 按新配置建新窗 → 恢复可见性与位置。
     let was_visible = app
         .get_webview_window("monitor")
         .map(|w| w.is_visible().unwrap_or(false))
         .unwrap_or(false);
+    let prev_pos = app
+        .get_webview_window("monitor")
+        .and_then(|w| w.outer_position().ok())
+        .map(|p| (p.x, p.y));
     if let Some(w) = app.get_webview_window("monitor") {
         if let Err(e) = w.destroy() {
             logger.error(&format!("销毁旧监视窗口失败: {}", e), None);
@@ -478,7 +504,7 @@ pub(crate) fn apply_skin(app: &tauri::AppHandle, key: &str) -> Result<(), String
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     let url = skin::skin_url(source, &skin_ref.folder);
-    let new_window = match windows::create_monitor_window(app, &cfg, url, false) {
+    let new_window = match windows::create_monitor_window(app, &cfg, url, false, prev_pos) {
         Ok(w) => w,
         Err(e) => {
             // 新建失败:用当前皮肤原样重建,避免把监视窗留在"已销毁"状态
@@ -486,7 +512,7 @@ pub(crate) fn apply_skin(app: &tauri::AppHandle, key: &str) -> Result<(), String
                 &format!("按新皮肤重建监视窗口失败,回退当前皮肤: {}", e),
                 Some(&new_key),
             );
-            let fallback = rebuild_current_monitor(app, was_visible);
+            let fallback = rebuild_current_monitor(app, was_visible, prev_pos);
             return Err(match fallback {
                 Some(_) => format!("换肤失败,已回退当前皮肤: {}", e),
                 None => format!("换肤失败且回退失败: {}", e),
@@ -850,6 +876,18 @@ fn quit_sequence(app: tauri::AppHandle) {
         }
     } else {
         logger.info("退出:服务器非本 GUI 启动,不停止", None);
+    }
+    // 保存悬浮窗位置(上次退出位置,下次启动恢复);被强杀时无法保存,与
+    // "服务器孤儿"同款限制。outer_position 是投递主线程+阻塞等待(getter),
+    // 本线程非主线程,安全。
+    if let Some(w) = app.get_webview_window("monitor") {
+        if let Ok(p) = w.outer_position() {
+            if let Err(e) = config_resolver::persist_window_pos(&current_exe_dir(), p.x, p.y) {
+                logger.error("保存悬浮窗位置失败(下次启动回退右上角停靠)", Some(&e));
+            } else {
+                logger.info("悬浮窗位置已保存", Some(&format!("x={} y={}", p.x, p.y)));
+            }
+        }
     }
     logger.info("launcher 退出", None);
     app.exit(0);

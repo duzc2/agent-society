@@ -78,6 +78,14 @@ pub fn monitor_start_drag(window: tauri::WebviewWindow) -> Result<(), String> {
     window.start_dragging().map_err(|e| e.to_string())
 }
 
+/// 双击悬浮窗兜底:皮肤未处理双击(未 preventDefault)时切换主窗口显隐。
+/// 由注入脚本判定"未处理"后调用(见 skin.rs DBLCLICK_TOGGLE_SCRIPT)。
+#[tauri::command]
+pub fn monitor_toggle_main(app: tauri::AppHandle) -> Result<(), String> {
+    crate::windows::toggle_main(&app);
+    Ok(())
+}
+
 /// 调试模式右键:弹出单条目菜单("退出调试")。结构与 monitor_context_menu 相同:
 /// async(防主线程死锁)+ 点击坐标定位 + POPUP_ACTIVE 重入守卫。
 /// 菜单点击由 run() 里注册的全局 on_menu_event 分发(无托盘,popup 事件仍走全局监听器)。
