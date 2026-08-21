@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Remote 远程桥接配置</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <div class="remote-panel" id="remote-panel">
+
+    <!-- 顶栏 -->
+    <div class="panel-header">
+      <span class="header-title">🌐 Remote 远程桥接</span>
+      <span class="header-desc">将 Agent 的工具调用桥接到远程 SSH 服务器</span>
+    </div>
+
+    <!-- 标签栏 -->
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="mappings" onclick="window._remoteSwitchTab('mappings')">Agent 映射</button>
+      <button class="tab-btn" data-tab="help" onclick="window._remoteSwitchTab('help')">使用说明</button>
+    </div>
+
+    <!-- 标签内容 -->
+    <div class="tab-content">
+
+      <!-- Agent 映射管理 -->
+      <div class="tab-panel active" id="tab-mappings">
+        <div class="config-layout">
+
+          <div class="config-col-header">
+            <h4 class="config-group-title">已配置的 Agent 映射</h4>
+            <button class="btn-sm btn-primary" id="btn-add-mapping" onclick="window._remoteShowAddForm()">+ 添加映射</button>
+          </div>
+
+          <div class="mappings-list" id="mappings-list">
+            <div class="empty-text">暂无映射，点击 + 添加</div>
+          </div>
+
+          <!-- 添加/编辑映射表单 -->
+          <div class="mapping-form" id="mapping-form" style="display:none">
+            <h4 class="config-group-title" id="form-title">添加 Agent 映射</h4>
+
+            <div class="form-grid">
+              <div class="form-item form-item-full">
+                <label for="map-agent-search">目标 Agent</label>
+                <!-- 可搜索 Agent 选择器（支持上百个 Agent） -->
+                <div class="agent-picker" id="agent-picker">
+                  <input type="text" id="map-agent-search"
+                         placeholder="输入 Agent 名称 / ID / 角色名搜索…"
+                         autocomplete="off" spellcheck="false">
+                  <div class="agent-picker-dropdown" id="agent-picker-dropdown"></div>
+                </div>
+                <div class="agent-chip" id="agent-picker-selected" style="display:none">
+                  <span class="chip-icon">🤖</span>
+                  <span class="chip-name" id="chip-agent-name"></span>
+                  <span class="chip-sub" id="chip-agent-sub"></span>
+                  <button type="button" class="chip-remove" id="chip-agent-remove" title="重新选择">✕</button>
+                </div>
+                <div class="picker-hint" id="picker-hint"></div>
+              </div>
+
+              <div class="form-item">
+                <label for="map-host">远程主机</label>
+                <input id="map-host" type="text" placeholder="192.168.1.100 或 hostname">
+              </div>
+
+              <div class="form-item form-item-sm">
+                <label for="map-port">端口</label>
+                <input id="map-port" type="number" value="22" min="1" max="65535">
+              </div>
+
+              <div class="form-item">
+                <label for="map-username">用户名</label>
+                <input id="map-username" type="text" placeholder="root">
+              </div>
+
+              <div class="form-item">
+                <label for="map-password">密码</label>
+                <input id="map-password" type="password" placeholder="密码（可选）">
+              </div>
+
+              <div class="form-item">
+                <label for="map-privateKey">私钥路径</label>
+                <input id="map-privateKey" type="text" placeholder="/home/user/.ssh/id_rsa（可选）">
+              </div>
+
+              <div class="form-item form-item-sm">
+                <label for="map-passphrase">密钥密码</label>
+                <input id="map-passphrase" type="password" placeholder="（可选）">
+              </div>
+
+              <div class="form-item form-item-check">
+                <label class="toggle">
+                  <input id="map-enabled" type="checkbox" checked>
+                  <span>启用</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <span id="form-result" class="config-result" style="display:none"></span>
+              <button class="btn-secondary" onclick="window._remoteTestConnection()">🔍 测试连接</button>
+              <button class="btn-secondary" onclick="window._remoteHideAddForm()">取消</button>
+              <button class="btn-primary" id="btn-save-mapping" onclick="window._remoteSaveMapping()">保存映射</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 使用说明 -->
+      <div class="tab-panel" id="tab-help">
+        <div class="help-content">
+          <h3>Remote 远程桥接 — 使用说明</h3>
+
+          <div class="help-section">
+            <h4>🎯 功能概述</h4>
+            <p>Remote 模块将指定的 Agent 的工具调用桥接到远程 SSH 服务器。Agent 会感觉自己完全在远程服务器上运行，但工作区文件操作仍然保持本地。</p>
+          </div>
+
+          <div class="help-section">
+            <h4>⚙️ 工作原理</h4>
+            <ul>
+              <li><strong>工作区内操作</strong>：文件在工作区内的读写操作仍然在本地执行，不受影响。</li>
+              <li><strong>工作区外操作</strong>：所有工作区外的文件操作（读取、列表、搜索、编辑等）和命令执行都会被翻译为 SSH 命令在远程服务器上执行。</li>
+              <li><strong>透明桥接</strong>：Agent 使用相同的工具名称，不需要改变行为，Remote 模块自动判断是否需要远程执行。</li>
+            </ul>
+          </div>
+
+          <div class="help-section">
+            <h4>📋 配置步骤</h4>
+            <ol>
+              <li>在「Agent 映射」标签页中点击「+ 添加映射」</li>
+              <li>在搜索框中输入 Agent 名称 / ID / 角色名快速定位要配置的 Agent（支持键盘 ↑↓ 导航、Enter 选中；已配置的 Agent 会标记「已配置」）</li>
+              <li>填写远程服务器的 SSH 连接信息（主机、端口、用户名、密码或密钥）</li>
+              <li>点击「测试连接」验证 SSH 连接是否正常</li>
+              <li>点击「保存映射」完成配置</li>
+              <li>配置立即生效，无需重启</li>
+            </ol>
+          </div>
+
+          <div class="help-section">
+            <h4>🔧 被拦截的工具</h4>
+            <p>以下工具在 Agent 配置了 Remote 后会被自动拦截并桥接到远程服务器：</p>
+            <div class="tool-list">
+              <code>exec_command</code> <code>file_read</code> <code>file_read_lines</code>
+              <code>list_files</code> <code>file_info</code> <code>file_line_count</code>
+              <code>file_search</code> <code>search_text</code> <code>edit_file</code>
+              <code>replace_file</code> <code>delete_file</code> <code>move_file</code>
+              <code>copy_file</code> <code>file_create_directory</code> <code>append_file</code>
+            </div>
+            <p style="margin-top:8px">命令执行工具（自动桥接到远程，**完全等价**：支持交互式输入、长期运行进程）：</p>
+            <div class="tool-list">
+              <code>localcmd_spawn</code> <code>localcmd_send_input</code>
+              <code>localcmd_read_output</code> <code>localcmd_get_status</code>
+              <code>localcmd_list</code> <code>localcmd_kill</code>
+            </div>
+            <p style="margin-top:8px;font-size:12px;color:var(--text-3,#888)">
+              命令在远程执行、输出格式与本地完全一致（<code>[STDOUT]</code>/<code>[STDERR]</code>/<code>[STDIN]</code> 前缀），
+              工具语义与本地完全等价（支持交互式输入、长期运行进程）。
+              <code>sandbox_*</code> 保持本地运行（沙箱只能访问本地工作区，与 Remote 不冲突）。
+            </p>
+          </div>
+
+          <div class="help-section">
+            <h4>⚠️ 注意事项</h4>
+            <ul>
+              <li>远程服务器需要安装 <code>python3</code> 或 <code>python</code>（用于 <code>edit_file</code> 的文本替换操作）。</li>
+              <li>远程文件路径使用 Linux 风格（如 <code>/home/user/project/src/main.py</code>）。</li>
+              <li>连接密码以明文存储在配置文件中，建议使用 SSH 密钥认证。</li>
+              <li>SSH 连接使用 keepalive 保持，空闲超时由 SSH 服务端决定。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="panel.js"></script>
+</body>
+</html>

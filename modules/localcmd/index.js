@@ -225,8 +225,14 @@ export default {
             processes: processManager.listProcesses()
           };
 
-        case "localcmd_kill":
+        case "localcmd_kill": {
+          // 防御：processManager 未初始化或 kill 不可用时给出明确错误（曾出现 "processManager.kill is not a function"）
+          if (!processManager || typeof processManager.kill !== "function") {
+            log.error("[LocalCmd] processManager 不可用，无法终止进程", { processId: args.processId });
+            return { error: "tool_error", toolName, message: "localcmd 未初始化，无法终止进程" };
+          }
           return processManager.kill(args.processId);
+        }
 
         default:
           return { error: "unknown_tool", toolName };

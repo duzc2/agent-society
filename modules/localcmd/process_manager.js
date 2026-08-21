@@ -331,7 +331,11 @@ export class ProcessManager {
         if (managedProcess.startupError) {
           return;
         }
-        managedProcess.status = code === 0 ? "completed" : "error";
+        // 如果进程是被主动 kill 的（_killProcess 已置 status="killed"），保持 killed，
+        // 否则 close 时按退出码覆盖会导致 killed 被误标为 error
+        if (managedProcess.status !== "killed") {
+          managedProcess.status = code === 0 ? "completed" : "error";
+        }
         managedProcess.exitCode = code;
 
         safeWrite("-".repeat(50) + "\n");
