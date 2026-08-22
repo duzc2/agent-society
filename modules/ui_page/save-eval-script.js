@@ -1,7 +1,7 @@
 import { registry } from "../../src/platform/core/module_registry.js";
 import { getMimeTypeFromExtension } from "../../src/platform/utils/content/content_type_utils.js";
 import { getWorkspaceManager } from "../../src/platform/services/workspace/workspace_manager.js";
-import { getAutoLoadRegistry } from "./auto_load.js";
+import { getAutoLoadRegistry, withPurposeHeader } from "./auto_load.js";
 
 /**
  * 注册 save-eval-script 相关的 Hono 路由。
@@ -19,7 +19,7 @@ function registerSaveEvalScriptRoutes({ app, log }) {
       return c.json({ error: "invalid_json", message: err.message }, 400);
     }
 
-    const { workspaceId, script, filename, autoLoad } = body;
+    const { workspaceId, script, filename, autoLoad, purpose } = body;
 
     if (!workspaceId || typeof workspaceId !== "string") {
       return c.json({ error: "missing_workspace_id" }, 400);
@@ -51,7 +51,10 @@ function registerSaveEvalScriptRoutes({ app, log }) {
         // 目录可能已存在，忽略错误
       }
 
-      await ws.writeFile(filePath, script, {
+      // purpose 写入脚本文件头部注释（// purpose: xxx），作为描述的唯一数据源：
+      // 管理面板（启动项/候选）从文件解析展示，不落注册表；缺失/非法时原样写（老客户端行为不变）
+      const finalScript = withPurposeHeader(script, purpose);
+      await ws.writeFile(filePath, finalScript, {
         mimeType: getMimeTypeFromExtension(".js") ?? "text/javascript",
         operator: "system",
         messageId: `save_eval_${Date.now()}`

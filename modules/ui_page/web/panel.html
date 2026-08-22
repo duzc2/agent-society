@@ -21,22 +21,18 @@
 
     <!-- 主列表：搜索 + 表格 -->
     <div class="list-toolbar">
-      <input type="text" class="search-input" id="search-input" placeholder="搜索名称 / 路径 / 工作区…" autocomplete="off" spellcheck="false">
+      <input type="text" class="search-input" id="search-input" placeholder="搜索名称 / 描述 / 路径 / 工作区…" autocomplete="off" spellcheck="false">
       <span class="list-count" id="list-count"></span>
     </div>
     <div class="table-wrap">
-      <table class="script-table">
-        <thead>
-          <tr>
-            <th class="col-name">名称</th>
-            <th class="col-path">路径</th>
-            <th class="col-ws">工作区</th>
-            <th class="col-status">状态</th>
-            <th class="col-actions">操作</th>
-          </tr>
-        </thead>
-        <tbody id="auto-scripts-list"></tbody>
-      </table>
+      <div class="script-list-header">
+        <span class="col-name">名称</span>
+        <span class="col-path">路径</span>
+        <span class="col-org">组织</span>
+        <span class="col-status">状态</span>
+        <span class="col-actions">操作</span>
+      </div>
+      <div class="script-list" id="auto-scripts-list"></div>
     </div>
 
     <!-- 添加脚本弹层 -->
@@ -47,7 +43,7 @@
           <button type="button" class="modal-close" id="btn-close-modal" title="关闭">✕</button>
         </div>
         <div class="modal-toolbar">
-          <input type="text" class="search-input" id="candidate-search" placeholder="搜索名称 / 路径 / 工作区…" autocomplete="off" spellcheck="false">
+          <input type="text" class="search-input" id="candidate-search" placeholder="搜索名称 / 描述 / 路径 / 工作区…" autocomplete="off" spellcheck="false">
           <span class="list-count" id="candidate-count"></span>
         </div>
         <div class="modal-body" id="add-candidates"></div>

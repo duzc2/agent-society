@@ -14,6 +14,39 @@ function _getBroker() {
   return { ok: true, broker };
 }
 
+/**
+ * 构造 workspaceId(= agent id) → 归属显示名「组织名 / 最上层agent名」的映射。
+ * 沿 parentAgentId 链向上找最上层 agent（链上父级缺失时以当前节点为准）；
+ * 组织名未设置时只显示最上层 agent 名，两者都拿不到回退原始 id。
+ * org 是运行时必建组件，缺失（异常初始化/测试 mock 未提供）返回空映射——显示降级不影响列表功能。
+ */
+function _buildAgentDisplayMap() {
+  const org = runtime?.org;
+  if (!org || typeof org.listAgents !== "function") return new Map();
+  const agents = org.listAgents();
+  const byId = new Map(agents.map((a) => [a.id, a]));
+  const map = new Map();
+  for (const a of agents) {
+    let head = a;
+    const seen = new Set();
+    while (head.parentAgentId && !seen.has(head.parentAgentId)) {
+      seen.add(head.parentAgentId);
+      const parent = byId.get(head.parentAgentId);
+      if (!parent) break;
+      head = parent;
+    }
+    const orgName = org.getOrgName?.(a.id) ?? null;
+    const headName = head.name ?? null;
+    map.set(a.id, [orgName, headName].filter(Boolean).join(" / ") || a.id);
+  }
+  return map;
+}
+
+/** 给条目附加 agentName（归属显示名），未命中回退原始 workspaceId */
+function _withAgentNames(items, displayMap) {
+  return items.map((it) => ({ ...it, agentName: displayMap.get(it.workspaceId) ?? it.workspaceId }));
+}
+
 async function _dispatchAndWait(type, payload, timeoutMs) {
   const brokerResult = _getBroker();
   if (!brokerResult.ok) return brokerResult;
@@ -123,8 +156,12 @@ export default {
   /**
    * 自动加载脚本管理 API（pathParts 不含模块名；只有 POST 会解析 body）
    *
+   * scripts/candidates 带 description（脚本文件头部 // purpose: 注释解析而来，面板展示用；
+   * 缺失/读取失败为空字符串）与 agentName（归属显示名「组织名 / 最上层agent名」，来自 org 树，
+   * 未命中回退 workspaceId）；POST 返回的 scripts 同样富化，保证面板操作后描述/归属不消失。
+   *
    * GET  auto-load-scripts                 → { ok, scripts }
-   * GET  auto-load-scripts/available       → { ok, candidates }（所有工作区 ui_page_js/ 下可添加的脚本，排除已注册）
+   * GET  auto-load-scripts/available       → { ok, candidates }（所有工作区 ui_page_js/ 下可添加的脚本，排除已注册，含 description/agentName）
    * GET  auto-load-scripts/executables     → { ok, scripts, errors }（前端页面加载时拉取执行）
    * POST auto-load-scripts {id, enabled}   → 启用/禁用，返回全量列表
    * POST auto-load-scripts {id, remove}    → 移除记录（不删文件），返回全量列表
@@ -142,9 +179,10 @@ export default {
       }
 
       try {
+        const displayMap = _buildAgentDisplayMap();
         if (req.method === "GET") {
           if (!action) {
-            return { ok: true, scripts: registry.list() };
+            return { ok: true, scripts: _withAgentNames(await registry.listWithDescriptions(), displayMap) };
           }
           if (action === "executables") {
             const { scripts, errors } = await registry.getExecutables();
@@ -152,7 +190,7 @@ export default {
           }
           if (action === "available") {
             const candidates = await registry.getAvailableCandidates();
-            return { ok: true, candidates };
+            return { ok: true, candidates: _withAgentNames(candidates, displayMap) };
           }
           return { error: "not_found", message: `未知子路径: ${action}` };
         }
@@ -222,7 +260,7 @@ export default {
           } else {
             return { error: "missing_params", message: "需提供 id（启停/删除）或 workspaceId+path（添加）" };
           }
-          return { ok: true, scripts: registry.list() };
+          return { ok: true, scripts: _withAgentNames(await registry.listWithDescriptions(), displayMap) };
         }
 
         return { error: "invalid_method" };

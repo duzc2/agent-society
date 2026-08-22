@@ -1,7 +1,7 @@
 /**
  * Web JS 自动加载 — 管理面板逻辑
  *
- * 列表展示自动加载脚本（名称/路径/工作区/状态），支持搜索过滤、启用/禁用/删除。
+ * 列表展示自动加载脚本（名称/路径/组织/状态/目的描述），支持搜索过滤、启用/禁用/删除。
  * 删除仅移除自动加载记录，不删除工作区文件。
  * 主题：检测宿主（同源 iframe）是否处于 .my-app-dark 深色模式，同步面板配色。
  */
@@ -22,14 +22,16 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-/** 按搜索词过滤（匹配名称/路径/工作区，不区分大小写） */
+/** 按搜索词过滤（匹配名称/路径/归属显示名/工作区/描述，不区分大小写） */
 function matches(entry, keyword) {
   if (!keyword) return true;
   const k = keyword.toLowerCase();
   return (
     String(entry.name ?? '').toLowerCase().includes(k) ||
     String(entry.path ?? '').toLowerCase().includes(k) ||
-    String(entry.workspaceId ?? '').toLowerCase().includes(k)
+    String(entry.agentName ?? '').toLowerCase().includes(k) ||
+    String(entry.workspaceId ?? '').toLowerCase().includes(k) ||
+    String(entry.description ?? '').toLowerCase().includes(k)
   );
 }
 
@@ -86,30 +88,32 @@ function render() {
   }
 
   if (filtered.length === 0) {
-    list.innerHTML = `
-      <tr><td colspan="5"><div class="empty-text">${
-        keyword
-          ? '未找到匹配的脚本。'
-          : '暂无自动加载脚本。智能体执行 JS 后，在保存提示中勾选「自动加载」即可添加。'
-      }</div></td></tr>`;
+    list.innerHTML = `<div class="empty-text">${
+      keyword
+        ? '未找到匹配的脚本。'
+        : '暂无自动加载脚本。智能体执行 JS 后，在保存提示中勾选「自动加载」即可添加。'
+    }</div>`;
     return;
   }
 
+  // 每个条目是一个 grid 容器：第一行 名称/路径/组织/状态/操作，描述为条目内第二行（全宽）——
+  // 与候选列表同模式，一个条目占两行高度，而非两条记录
   list.innerHTML = filtered.map((s) => `
-    <tr class="${s.enabled === false ? 'disabled' : ''}">
-      <td class="cell-name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</td>
-      <td class="cell-path" title="${escapeHtml(s.path)}">${escapeHtml(s.path)}</td>
-      <td class="cell-ws" title="${escapeHtml(s.workspaceId)}">${escapeHtml(s.workspaceId)}</td>
-      <td><span class="badge ${s.enabled === false ? 'disabled' : 'enabled'}">${s.enabled === false ? '已停用' : '已启用'}</span></td>
-      <td class="cell-actions">
+    <div class="script-item ${s.enabled === false ? 'disabled' : ''}">
+      <span class="cell-name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
+      <span class="cell-path" title="${escapeHtml(s.path)}">${escapeHtml(s.path)}</span>
+      <span class="cell-org" title="${escapeHtml(s.agentName ?? s.workspaceId)}">${escapeHtml(s.agentName ?? s.workspaceId)}</span>
+      <span class="cell-status"><span class="badge ${s.enabled === false ? 'disabled' : 'enabled'}">${s.enabled === false ? '已停用' : '已启用'}</span></span>
+      <span class="cell-actions">
         <label class="toggle" title="启用/停用">
           <input type="checkbox" class="auto-toggle" data-id="${escapeHtml(s.id)}" ${s.enabled === false ? '' : 'checked'}>
           <span>启用</span>
         </label>
         <button type="button" class="btn-run auto-run" data-id="${escapeHtml(s.id)}" title="执行一次该脚本，确认效果">运行</button>
         <button type="button" class="btn-danger auto-remove" data-id="${escapeHtml(s.id)}" title="移除自动加载（不删除文件）">删除</button>
-      </td>
-    </tr>
+      </span>
+      ${s.description ? `<span class="cell-desc" title="${escapeHtml(s.description)}">${escapeHtml(s.description)}</span>` : ''}
+    </div>
   `).join('');
 }
 
@@ -204,8 +208,9 @@ function renderCandidates() {
     <div class="candidate-item" data-ws="${escapeHtml(c.workspaceId)}" data-path="${escapeHtml(c.path)}" title="点击添加">
       <span class="candidate-name">${escapeHtml(c.name)}</span>
       <span class="candidate-path">${escapeHtml(c.path)}</span>
-      <span class="candidate-ws">${escapeHtml(c.workspaceId)}</span>
+      <span class="candidate-ws" title="${escapeHtml(c.agentName ?? c.workspaceId)}">${escapeHtml(c.agentName ?? c.workspaceId)}</span>
       <button type="button" class="btn-run candidate-run" data-ws="${escapeHtml(c.workspaceId)}" data-path="${escapeHtml(c.path)}" title="执行一次该脚本，确认效果">运行</button>
+      ${c.description ? `<span class="candidate-desc" title="${escapeHtml(c.description)}">${escapeHtml(c.description)}</span>` : ''}
     </div>
   `).join('');
 }

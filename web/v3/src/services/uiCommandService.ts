@@ -353,7 +353,10 @@ class UiCommandService {
                             workspaceId: wsId,
                             script,
                             filename: result.filename,
-                            autoLoad: result.autoLoad
+                            autoLoad: result.autoLoad,
+                            // 目的描述随保存请求传给服务端，写入脚本文件头部注释（// purpose: xxx），
+                            // 供管理面板展示；与 showSaveNotice 的 purpose 同源（工具参数）
+                            purpose: cmd.payload?.purpose
                         })
                     });
                 }

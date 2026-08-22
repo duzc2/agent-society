@@ -166,48 +166,51 @@ body {
   border-radius: 4px;
 }
 
-.script-table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
+/* 主列表：表头 + 条目（每个条目是 grid 容器，描述为条目内第二行全宽） */
+.script-list-header,
+.script-item {
+  display: grid;
+  grid-template-columns: 16% 26% 22% 8% 28%;
+  gap: 0 8px;
+  align-items: center;
 }
 
-.script-table th {
+.script-list-header {
   position: sticky;
   top: 0;
   z-index: 1;
   background: var(--bg-2);
-  text-align: left;
   font-size: 11px;
   font-weight: 600;
   color: var(--text-3);
-  padding: 4px 8px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--border-1);
 }
 
-.script-table td {
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--border-1);
-  vertical-align: middle;
+.script-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
 }
 
-.script-table tbody tr {
+.script-item {
+  padding: 6px 12px;
+  border-radius: 6px;
   transition: background 0.15s;
 }
 
-.script-table tbody tr:hover {
+.script-item:hover {
   background: var(--bg-3);
 }
 
-.script-table tbody tr.disabled {
+.script-item.disabled {
   opacity: 0.55;
 }
 
-.col-name { width: 14%; }
-.col-path { width: 28%; }
-.col-ws { width: 17%; }
-.col-status { width: 11%; }
-.col-actions { width: 30%; text-align: right !important; }
+.col-actions {
+  text-align: right;
+}
 
 .cell-name {
   font-weight: 600;
@@ -218,10 +221,25 @@ body {
 }
 
 .cell-path,
-.cell-ws {
+.cell-org {
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 12px;
   color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell-actions {
+  justify-self: end;
+  white-space: nowrap;
+}
+
+/* 目的描述：条目内第二行，全宽（grid-column 1/-1），弱色小字，单行截断，悬停 title 看全文 */
+.cell-desc {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -457,6 +475,16 @@ body {
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 12px;
   color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 候选条目目的描述：横跨整行（第二行），单行截断，悬停 title 看全文 */
+.candidate-desc {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -15,7 +15,11 @@ import fsp from "node:fs/promises";
 import { makeTestLogger, testLoggerRoot } from "../helpers/test_logger.js";
 import { makeFakeConfigService } from "../helpers/fake_config_service.js";
 import { assertCalledWith } from "../helpers/test_runner.js";
-import { createAutoLoadRegistry } from "../../modules/ui_page/auto_load.js";
+import {
+  createAutoLoadRegistry,
+  extractPurpose,
+  withPurposeHeader,
+} from "../../modules/ui_page/auto_load.js";
 import uiPageModule from "../../modules/ui_page/index.js";
 import { _setBroker } from "../../modules/ui_page/broker.js";
 import {
@@ -543,6 +547,28 @@ describe("ui_page 模块 HTTP handler（添加脚本）", () => {
     const bad3 = await handler(makeReq("POST"), null, ["auto-load-scripts"], { workspaceId: "ws-1", path: "../ui_page_js/foo.js" });
     assert.strictEqual(bad3.error, "invalid_params");
   });
+
+  it("GET 启动项列表带 description：从脚本文件头部注释解析，无头注释为空", async () => {
+    await writeWorkspaceFile(dirs.wsDir, "ws-1", "ui_page_js/foo.js", "// purpose: 自动登录\nconst a = 1;");
+    await writeWorkspaceFile(dirs.wsDir, "ws-1", "ui_page_js/bar.js", "const b = 2;");
+    await initWithEntries([entry("ws-1", "ui_page_js/foo.js"), entry("ws-1", "ui_page_js/bar.js")]);
+
+    const result = await handler(makeReq(), null, ["auto-load-scripts"]);
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.scripts.length, 2);
+    assert.strictEqual(result.scripts.find((s) => s.path === "ui_page_js/foo.js").description, "自动登录");
+    assert.strictEqual(result.scripts.find((s) => s.path === "ui_page_js/bar.js").description, "");
+  });
+
+  it("POST 启停/删除后返回的 scripts 仍带 description（面板操作后描述不消失）", async () => {
+    await writeWorkspaceFile(dirs.wsDir, "ws-1", "ui_page_js/foo.js", "// purpose: 自动登录\nconst a = 1;");
+    await initWithEntries([entry("ws-1", "ui_page_js/foo.js")]);
+
+    const result = await handler(makeReq("POST"), null, ["auto-load-scripts"], { id: "ws-1:ui_page_js/foo.js", enabled: false });
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.scripts.length, 1);
+    assert.strictEqual(result.scripts[0].description, "自动登录");
+  });
 });
 
 describe("ui_page 模块 HTTP handler（运行预览）", () => {
@@ -722,5 +748,295 @@ describe("ui_page 模块 HTTP handler（运行预览）", () => {
     } finally {
       mock.timers.reset();
     }
+  });
+});
+
+describe("脚本头部目的描述（purpose）纯函数", () => {
+  describe("extractPurpose", () => {
+    it("无头注释 → 空字符串", () => {
+      assert.strictEqual(extractPurpose("const a = 1;"), "");
+      assert.strictEqual(extractPurpose(""), "");
+      assert.strictEqual(extractPurpose(null), "");
+    });
+
+    it("首行 `// purpose: x` → x", () => {
+      assert.strictEqual(extractPurpose("// purpose: 自动登录\nconst a = 1;"), "自动登录");
+    });
+
+    it("头部普通注释之后第二行匹配 → 解析该行", () => {
+      assert.strictEqual(extractPurpose("// 说明\n// purpose: 创建小窗\nconst a = 1;"), "创建小窗");
+    });
+
+    it("容忍多余空白（`//   purpose:   x  `）", () => {
+      assert.strictEqual(extractPurpose("//   purpose:   创建小窗  \nconst a = 1;"), "创建小窗");
+    });
+
+    it("容忍无空格写法 `//purpose: x`", () => {
+      assert.strictEqual(extractPurpose("//purpose: x"), "x");
+    });
+
+    it("CRLF 行尾可解析", () => {
+      assert.strictEqual(extractPurpose("// purpose: 自动登录\r\nconst a = 1;"), "自动登录");
+    });
+
+    it("前 20 行内首个匹配生效（多个 purpose 行取第一个）", () => {
+      const content = "// purpose: 第一个\n// purpose: 第二个\nconst a = 1;";
+      assert.strictEqual(extractPurpose(content), "第一个");
+    });
+
+    it("第 21 行才出现 purpose → 空字符串（扫描上限）", () => {
+      const content = Array(20).fill("x").join("\n") + "\n// purpose: 太靠后了";
+      assert.strictEqual(extractPurpose(content), "");
+    });
+
+    it("超出 500 字符截断", () => {
+      const long = "x".repeat(600);
+      assert.strictEqual(extractPurpose(`// purpose: ${long}`), "x".repeat(500));
+    });
+  });
+
+  describe("withPurposeHeader", () => {
+    it("正常注入：`// purpose: x\\n` + 原内容", () => {
+      assert.strictEqual(
+        withPurposeHeader("const a = 1;", "在右下角创建股票价格小窗口"),
+        "// purpose: 在右下角创建股票价格小窗口\nconst a = 1;"
+      );
+    });
+
+    it("purpose 含换行/多空白 → 折叠为单空格（防注释逃逸注入代码）", () => {
+      assert.strictEqual(
+        withPurposeHeader("const a = 1;", "第一行\n第二行\r\n第三行"),
+        "// purpose: 第一行 第二行 第三行\nconst a = 1;"
+      );
+      assert.strictEqual(
+        withPurposeHeader("const a = 1;", "a    b"),
+        "// purpose: a b\nconst a = 1;"
+      );
+    });
+
+    it("purpose 含 Unicode 行分隔符（U+2028/U+2029）→ 折叠", () => {
+      // 转义序列在 JS 解析时即为真实 U+2028/U+2029（源码内不用字面字符，避免传输丢失）
+      assert.strictEqual(
+        withPurposeHeader("const a = 1;", "a\u2028b\u2029c"),
+        "// purpose: a b c\nconst a = 1;"
+      );
+    });
+
+    it("purpose 为空/纯空白/非字符串 → 原样返回 content（无头注释）", () => {
+      assert.strictEqual(withPurposeHeader("const a = 1;", ""), "const a = 1;");
+      assert.strictEqual(withPurposeHeader("const a = 1;", "   "), "const a = 1;");
+      assert.strictEqual(withPurposeHeader("const a = 1;", undefined), "const a = 1;");
+      assert.strictEqual(withPurposeHeader("const a = 1;", 123), "const a = 1;");
+    });
+
+    it("purpose 超出 200 字符截断", () => {
+      const long = "x".repeat(300);
+      const out = withPurposeHeader("const a = 1;", long);
+      assert.ok(out.startsWith(`// purpose: ${"x".repeat(200)}\n`));
+    });
+  });
+});
+
+describe("createAutoLoadRegistry.listWithDescriptions", () => {
+  let configService;
+  let log;
+  let dirs;
+
+  beforeEach(() => {
+    configService = makeFakeConfigService();
+    log = makeTestLogger("AutoLoad|test");
+    dirs = makeTempDirs();
+    _setTestWorkspaceManager(new WorkspaceManager({
+      dataDir: dirs.root,
+      workspacesDir: dirs.wsDir,
+      logger: makeTestLogger("WM|test"),
+    }));
+  });
+
+  afterEach(() => {
+    _resetWorkspaceManager();
+  });
+
+  it("含 purpose 头注释的文件 → description 正确；无头注释 → 空字符串", async () => {
+    await writeWorkspaceFile(dirs.wsDir, "ws-1", "ui_page_js/foo.js", "// purpose: 自动登录\nconst a = 1;");
+    await writeWorkspaceFile(dirs.wsDir, "ws-1", "ui_page_js/bar.js", "const b = 2;");
+
+    const reg = createAutoLoadRegistry({ configService, log });
+    await reg.load();
+    await reg.add({ workspaceId: "ws-1", path: "ui_page_js/foo.js" });
+    await reg.add({ workspaceId: "ws-1", path: "ui_page_js/bar.js" });
+
+    const list = await reg.listWithDescriptions();
+    assert.strictEqual(list.length, 2);
+    assert.strictEqual(list.find((s) => s.path === "ui_page_js/foo.js").description, "自动登录");
+    assert.strictEqual(list.find((s) => s.path === "ui_page_js/bar.js").description, "");
+  });
+
+  it("文件缺失的条目 → description 为空且其余条目正常（逐条容错）", async () => {
+    await writeWorkspaceFile(dirs.wsDir, "ws-1", "ui_page_js/foo.js", "// purpose: 自动登录\nconst a = 1;");
+
+    const reg = createAutoLoadRegistry({ configService, log });
+    await reg.load();
+    await reg.add({ workspaceId: "ws-1", path: "ui_page_js/foo.js" });
+    await reg.add({ workspaceId: "ws-1", path: "ui_page_js/missing.js" });
+
+    const list = await reg.listWithDescriptions();
+    assert.strictEqual(list.length, 2);
+    assert.strictEqual(list.find((s) => s.path === "ui_page_js/foo.js").description, "自动登录");
+    assert.strictEqual(list.find((s) => s.path === "ui_page_js/missing.js").description, "");
+  });
+
+  it("路径越界条目 → description 为空，不抛", async () => {
+    const reg = createAutoLoadRegistry({ configService, log });
+    await reg.load();
+    await reg.add({ workspaceId: "ws-1", path: "../evil.js" });
+
+    const list = await reg.listWithDescriptions();
+    assert.strictEqual(list.length, 1);
+    assert.strictEqual(list[0].description, "");
+  });
+
+  it("空注册表 → 空数组", async () => {
+    const reg = createAutoLoadRegistry({ configService, log });
+    await reg.load();
+    assert.deepStrictEqual(await reg.listWithDescriptions(), []);
+  });
+
+  it("workspace_manager 未注入 → 每条 description 为空，不抛（读文件失败走逐条容错）", async () => {
+    _resetWorkspaceManager();
+    const reg = createAutoLoadRegistry({ configService, log });
+    await reg.load();
+    await reg.add({ workspaceId: "ws-1", path: "ui_page_js/foo.js" });
+    const list = await reg.listWithDescriptions();
+    assert.strictEqual(list.length, 1);
+    assert.strictEqual(list[0].description, "");
+  });
+});
+
+describe("createAutoLoadRegistry.getAvailableCandidates（带描述）", () => {
+  let configService;
+  let log;
+  let dirs;
+
+  beforeEach(() => {
+    configService = makeFakeConfigService();
+    log = makeTestLogger("AutoLoad|test");
+    dirs = makeTempDirs();
+    _setTestWorkspaceManager(new WorkspaceManager({
+      dataDir: dirs.root,
+      workspacesDir: dirs.wsDir,
+      logger: makeTestLogger("WM|test"),
+    }));
+  });
+
+  afterEach(() => {
+    _resetWorkspaceManager();
+  });
+
+  it("候选带 description：含头注释文件解析正确，无头注释为空", async () => {
+    await writeWorkspaceFile(dirs.wsDir, "ws-1", "ui_page_js/foo.js", "// purpose: 股票小窗\nconst a = 1;");
+    await writeWorkspaceFile(dirs.wsDir, "ws-1", "ui_page_js/bar.js", "const b = 2;");
+
+    const reg = createAutoLoadRegistry({ configService, log });
+    await reg.load();
+    const candidates = await reg.getAvailableCandidates();
+
+    assert.strictEqual(candidates.length, 2);
+    assert.strictEqual(candidates.find((c) => c.path === "ui_page_js/foo.js").description, "股票小窗");
+    assert.strictEqual(candidates.find((c) => c.path === "ui_page_js/bar.js").description, "");
+  });
+});
+
+describe("ui_page 模块 HTTP handler（归属显示名富化）", () => {
+  let handler;
+  let configService;
+  let dirs;
+  let mockOrg;
+
+  beforeEach(async () => {
+    dirs = makeTempDirs();
+    configService = makeFakeConfigService();
+    // 组织 mock：head-1(顶层) → mid-1 → leaf-1(该 agent 设了组织名)；solo-1 独立 agent
+    mockOrg = {
+      listAgents: () => [
+        { id: "head-1", name: "投资总监Agent", parentAgentId: null },
+        { id: "mid-1", name: "研究员Agent", parentAgentId: "head-1" },
+        { id: "leaf-1", name: "量化Agent", parentAgentId: "mid-1" },
+        { id: "solo-1", name: "独立Agent", parentAgentId: null },
+      ],
+      getOrgName: (id) => (id === "leaf-1" ? "股票研究部" : null),
+    };
+    _setTestWorkspaceManager(new WorkspaceManager({
+      dataDir: dirs.root,
+      workspacesDir: dirs.wsDir,
+      logger: makeTestLogger("WM|test"),
+    }));
+    try { await uiPageModule.shutdown(); } catch {}
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService, org: mockOrg });
+    handler = uiPageModule.getHttpHandler();
+  });
+
+  afterEach(async () => {
+    try { await uiPageModule.shutdown(); } catch {}
+    try { await fsp.rm(dirs.root, { recursive: true, force: true }); } catch {}
+    _resetWorkspaceManager();
+  });
+
+  function makeReq(method = "GET") {
+    return { method, url: "/api/modules/ui_page/auto-load-scripts" };
+  }
+
+  /** 预置注册表条目后重新初始化模块（模拟重启后从配置加载） */
+  async function initWithEntries(entries) {
+    await configService.saveModuleConfig("ui_page", { autoLoadScripts: entries });
+    try { await uiPageModule.shutdown(); } catch {}
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService, org: mockOrg });
+    handler = uiPageModule.getHttpHandler();
+  }
+
+  function entry(workspaceId, relPath, enabled = true) {
+    return {
+      id: `${workspaceId}:${relPath}`,
+      name: path.basename(relPath, ".js"),
+      workspaceId,
+      path: relPath,
+      enabled,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+  }
+
+  it("GET 启动项列表：agentName 显示「组织名 / 最上层agent名」", async () => {
+    await writeWorkspaceFile(dirs.wsDir, "leaf-1", "ui_page_js/foo.js", "x");
+    await initWithEntries([entry("leaf-1", "ui_page_js/foo.js")]);
+
+    const result = await handler(makeReq(), null, ["auto-load-scripts"]);
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.scripts[0].agentName, "股票研究部 / 投资总监Agent");
+  });
+
+  it("无组织名 → 只显示最上层 agent 名；自己即顶层 → 显示自己", async () => {
+    await writeWorkspaceFile(dirs.wsDir, "mid-1", "ui_page_js/a.js", "x");
+    await writeWorkspaceFile(dirs.wsDir, "solo-1", "ui_page_js/b.js", "x");
+    await initWithEntries([entry("mid-1", "ui_page_js/a.js"), entry("solo-1", "ui_page_js/b.js")]);
+
+    const result = await handler(makeReq(), null, ["auto-load-scripts"]);
+    assert.strictEqual(result.scripts.find((s) => s.path === "ui_page_js/a.js").agentName, "投资总监Agent");
+    assert.strictEqual(result.scripts.find((s) => s.path === "ui_page_js/b.js").agentName, "独立Agent");
+  });
+
+  it("org 树中不存在的 workspaceId → agentName 回退原始 id", async () => {
+    await writeWorkspaceFile(dirs.wsDir, "unknown-ws", "ui_page_js/c.js", "x");
+    await initWithEntries([entry("unknown-ws", "ui_page_js/c.js")]);
+
+    const result = await handler(makeReq(), null, ["auto-load-scripts"]);
+    assert.strictEqual(result.scripts[0].agentName, "unknown-ws");
+  });
+
+  it("GET available 候选同样带 agentName", async () => {
+    await writeWorkspaceFile(dirs.wsDir, "leaf-1", "ui_page_js/foo.js", "x");
+
+    const result = await handler(makeReq(), null, ["auto-load-scripts", "available"]);
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.candidates[0].agentName, "股票研究部 / 投资总监Agent");
   });
 });

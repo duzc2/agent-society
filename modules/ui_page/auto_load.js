@@ -20,6 +20,14 @@ import { getWorkspaceManager } from "../../src/platform/services/workspace/works
 
 const CONFIG_KEY = "autoLoadScripts";
 
+// 脚本头部目的描述约定：保存脚本时写入文件首行 `// purpose: xxx`（withPurposeHeader），
+// 读取侧从文件前 20 行内解析（extractPurpose），无匹配返回空字符串。
+// 注册表不冗余存储描述——文件是唯一数据源，候选（未注册）脚本与已注册脚本共用同一解析。
+const PURPOSE_RE = /^\/\/\s*purpose:\s*(.*)$/;
+const MAX_PURPOSE_HEADER_SCAN_LINES = 20;
+const MAX_PURPOSE_READ_LENGTH = 500;
+const MAX_PURPOSE_WRITE_LENGTH = 200;
+
 /**
  * 校验单条注册表条目（配置文件是外部数据，形状不可信）。
  */
@@ -34,11 +42,11 @@ function isValidEntry(s) {
 }
 
 /**
- * 读取工作区文件内容（直接 fs 读，remote 模块先例），带路径越界防护。
+ * 解析工作区文件绝对路径（带路径越界防护）。
  * @param {{workspaceId: string, path: string}} entry
- * @returns {Promise<string>}
+ * @returns {string}
  */
-async function _readWorkspaceFile(entry) {
+function _resolveWorkspaceAbsPath(entry) {
   const wm = getWorkspaceManager();
   if (!wm) {
     throw new Error("workspace_manager_unavailable");
@@ -48,7 +56,68 @@ async function _readWorkspaceFile(entry) {
   if (abs !== root && !abs.startsWith(root + path.sep)) {
     throw new Error(`路径超出工作区范围: ${entry.path}`);
   }
-  return await fsp.readFile(abs, "utf8");
+  return abs;
+}
+
+/**
+ * 读取工作区文件内容（直接 fs 读，remote 模块先例），带路径越界防护。
+ * @param {{workspaceId: string, path: string}} entry
+ * @returns {Promise<string>}
+ */
+async function _readWorkspaceFile(entry) {
+  return await fsp.readFile(_resolveWorkspaceAbsPath(entry), "utf8");
+}
+
+/**
+ * 只读工作区文件前 maxBytes 字节（供解析头部目的描述，避免为取头部注释整读大脚本）。
+ * @param {{workspaceId: string, path: string}} entry
+ * @param {number} maxBytes
+ * @returns {Promise<string>}
+ */
+async function _readWorkspaceFilePrefix(entry, maxBytes) {
+  const fh = await fsp.open(_resolveWorkspaceAbsPath(entry), "r");
+  try {
+    const buf = Buffer.alloc(maxBytes);
+    const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
+    return buf.toString("utf8", 0, bytesRead);
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * 从脚本内容解析头部目的描述（`// purpose: xxx` 约定，首个匹配生效）。
+ * 只扫描前 MAX_PURPOSE_HEADER_SCAN_LINES 行；无匹配返回空字符串。
+ * @param {string} content
+ * @returns {string}
+ */
+export function extractPurpose(content) {
+  if (typeof content !== "string" || !content) return "";
+  const lines = content.split(/\r?\n/);
+  const limit = Math.min(lines.length, MAX_PURPOSE_HEADER_SCAN_LINES);
+  for (let i = 0; i < limit; i++) {
+    const m = lines[i].trim().match(PURPOSE_RE);
+    if (m) {
+      return m[1].trim().slice(0, MAX_PURPOSE_READ_LENGTH);
+    }
+  }
+  return "";
+}
+
+/**
+ * 生成带头部目的描述的脚本内容：`// purpose: xxx\n` + 原内容。
+ * purpose 缺失/非法时原样返回 content（老客户端不传 purpose 行为不变）。
+ * 折叠换行与连续空白为单空格——`//` 行注释以换行结尾，描述若含换行会逃逸注释注入代码，
+ * 必须清洗；JS 的 \s 同时覆盖 \u2028/\u2029，一并折叠。
+ * @param {string} content
+ * @param {unknown} purpose
+ * @returns {string}
+ */
+export function withPurposeHeader(content, purpose) {
+  if (typeof purpose !== "string") return content;
+  const cleaned = purpose.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!cleaned) return content;
+  return `// purpose: ${cleaned.slice(0, MAX_PURPOSE_WRITE_LENGTH)}\n${content}`;
 }
 
 /**
@@ -121,6 +190,31 @@ export function createAutoLoadRegistry({ configService, log }) {
     },
 
     /**
+     * 返回注册表列表副本，并附上从脚本文件头部解析出的目的描述（description）。
+     * 逐条读文件前缀解析，单条失败（文件缺失/越界/读取错误）仅该条 description 为空，
+     * 不影响其余条目（与 getExecutables 逐条容错同哲学）。
+     * @returns {Promise<Array<object>>}
+     */
+    async listWithDescriptions() {
+      const out = [];
+      for (const s of _scripts) {
+        try {
+          const prefix = await _readWorkspaceFilePrefix(s, 4096);
+          out.push({ ...s, description: extractPurpose(prefix) });
+        } catch (err) {
+          log.error("[AutoLoad] 读取脚本描述失败", {
+            id: s.id,
+            path: s.path,
+            error: err?.message ?? String(err),
+            stack: err?.stack,
+          });
+          out.push({ ...s, description: "" });
+        }
+      }
+      return out;
+    },
+
+    /**
      * 启用/禁用指定条目。
      * @returns {Promise<{ok: true} | {ok: false, error: string}>}
      */
@@ -178,7 +272,8 @@ export function createAutoLoadRegistry({ configService, log }) {
     /**
      * 枚举所有工作区 ui_page_js/ 下的可添加脚本（供面板"添加脚本"使用）。
      * 排除已在注册表中的条目（无论启用与否）；某工作区无该目录或读取失败时跳过。
-     * @returns {Promise<Array<{workspaceId: string, path: string, name: string}>>}
+     * description 从脚本文件头部注释解析（与已注册条目同一数据源），单文件解析失败为 ""。
+     * @returns {Promise<Array<{workspaceId: string, path: string, name: string, description: string}>>}
      */
     async getAvailableCandidates() {
       const wm = getWorkspaceManager();
@@ -208,7 +303,20 @@ export function createAutoLoadRegistry({ configService, log }) {
           if (!f.isFile() || !f.name.endsWith(".js")) continue;
           const p = `ui_page_js/${f.name}`;
           if (registered.has(`${ws.id}:${p}`)) continue;
-          candidates.push({ workspaceId: ws.id, path: p, name: f.name.slice(0, -3) });
+          let description = "";
+          try {
+            const prefix = await _readWorkspaceFilePrefix({ workspaceId: ws.id, path: p }, 4096);
+            description = extractPurpose(prefix);
+          } catch (err) {
+            // 单文件描述读取失败：候选仍可添加，记录以排查权限/路径问题
+            log.error("[AutoLoad] 读取候选脚本描述失败", {
+              workspaceId: ws.id,
+              path: p,
+              error: err?.message ?? String(err),
+              stack: err?.stack,
+            });
+          }
+          candidates.push({ workspaceId: ws.id, path: p, name: f.name.slice(0, -3), description });
         }
       }
 
