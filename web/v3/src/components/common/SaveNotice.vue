@@ -32,6 +32,13 @@ const handleConfirm = (item: SaveNoticeItem) => {
             <span v-if="item.purpose" class="save-notice-purpose" :title="item.purpose">
               目的：{{ item.purpose }}
             </span>
+            <span v-if="item.agentContext" class="save-notice-agent">
+              由 {{ item.agentContext.agentName }} 执行
+              <template v-if="item.agentContext.orgName">
+                · {{ item.agentContext.orgName }}
+                <template v-if="item.agentContext.orgManagerName">（{{ item.agentContext.orgManagerName }} 管理）</template>
+              </template>
+            </span>
           </div>
         </div>
         <div class="save-notice-actions">
@@ -55,6 +62,13 @@ const handleConfirm = (item: SaveNoticeItem) => {
         <div class="save-notice-input-label">
           {{ item.message }}
           <span v-if="item.purpose" class="save-notice-purpose-inline">（目的：{{ item.purpose }}）</span>
+        </div>
+        <div v-if="item.agentContext" class="save-notice-agent">
+          由 {{ item.agentContext.agentName }} 执行
+          <template v-if="item.agentContext.orgName">
+            · {{ item.agentContext.orgName }}
+            <template v-if="item.agentContext.orgManagerName">（{{ item.agentContext.orgManagerName }} 管理）</template>
+          </template>
         </div>
         <div class="save-notice-input-row">
           <InputText
@@ -168,6 +182,18 @@ const handleConfirm = (item: SaveNoticeItem) => {
 
 .save-notice-purpose-inline {
   color: var(--text-color-secondary, #888);
+}
+
+.save-notice-agent {
+  font-size: 12px;
+  color: var(--text-color-secondary, #888);
+  line-height: 1.5;
+  word-break: break-word;
+  /* 最多两行，超出省略 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .save-notice-input-row {

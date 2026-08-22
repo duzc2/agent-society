@@ -18,6 +18,16 @@ export interface SaveNoticeResult {
   autoLoad: boolean;
 }
 
+/** 执行脚本的智能体归属上下文（来自组织树），显示在提示框帮助用户确认是谁执行的 */
+export interface AgentContext {
+  /** 执行脚本的智能体名称 */
+  agentName: string;
+  /** 所属组织名称（可能未设置） */
+  orgName: string | null;
+  /** 管理组织的智能体名称（设置该组织名的 agent） */
+  orgManagerName: string | null;
+}
+
 /** 单条保存提示（含独立表单状态，多卡片各自维护） */
 export interface SaveNoticeItem {
   id: number;
@@ -26,6 +36,8 @@ export interface SaveNoticeItem {
   purpose?: string;
   /** 建议文件名（不含 .js 后缀），预填输入框，用户可修改 */
   suggestedFilename?: string;
+  /** 执行脚本的智能体归属（agent 名/组织/组织管理者），解析失败时为 null 不展示 */
+  agentContext?: AgentContext | null;
   /** 是否处于文件名输入态 */
   saveMode: boolean;
   /** 文件名输入框当前值 */
@@ -53,12 +65,14 @@ let nextId = 1;
  * @param options.message 提示文字
  * @param options.purpose 脚本运行目的（可空，来自工具 purpose 参数）
  * @param options.suggestedFilename 建议文件名（可空，预填输入框）
+ * @param options.agentContext 执行脚本的智能体归属（可空，来自组织树解析）
  * @returns Promise<SaveNoticeResult | null>（null 表示用户取消/关闭）
  */
 export function showSaveNotice(options: {
   message: string;
   purpose?: string;
   suggestedFilename?: string;
+  agentContext?: AgentContext | null;
 }): Promise<SaveNoticeResult | null> {
   return new Promise<SaveNoticeResult | null>((resolve) => {
     state.items.push({
@@ -66,6 +80,7 @@ export function showSaveNotice(options: {
       message: options.message,
       purpose: options.purpose || undefined,
       suggestedFilename: options.suggestedFilename || undefined,
+      agentContext: options.agentContext || null,
       saveMode: false,
       inputValue: options.suggestedFilename || '',
       autoLoad: false,

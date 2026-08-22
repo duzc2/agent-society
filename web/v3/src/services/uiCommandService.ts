@@ -14,7 +14,7 @@
  */
 
 import { showSaveNotice } from './saveNoticeService';
-import { heartbeatService } from './heartbeatService';
+import { heartbeatService, resolveAgentContext } from './heartbeatService';
 
 // 命令类型定义
 interface UiCommand {
@@ -339,11 +339,15 @@ class UiCommandService {
             const script = cmd.payload?.script;
             const wsId = cmd.payload?._ws;
             // 连续多次执行会产生多个提示框并列显示（最早在下、最新在上），互不替换；
-            // purpose/suggestedFilename 来自工具参数，用于展示目的与预填建议文件名
+            // purpose/suggestedFilename 来自工具参数，用于展示目的与预填建议文件名；
+            // agentContext 从组织树解析执行智能体的归属（哪个 agent 执行/哪个组织/谁管理），
+            // 树未加载或 agent 不在树中时为 null，提示框不展示该行
+            const agentCtx = resolveAgentContext(cmd.payload?._ws);
             showSaveNotice({
                 message: '是否保存刚才执行的 JavaScript 代码？',
                 purpose: cmd.payload?.purpose,
                 suggestedFilename: cmd.payload?.suggestedFilename,
+                agentContext: agentCtx,
             }).then(async (result) => {
                 if (result?.filename && wsId) {
                     await fetch('/api/save-eval-script', {

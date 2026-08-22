@@ -170,3 +170,41 @@ export const orgTreeHandler = (msg: HeartbeatMessage) => {
   orgTreeState.nodeCount = payload.nodeCount;
   orgTreeState.loaded = true;
 };
+
+/**
+ * 从组织树解析 agent 的归属上下文：执行 agent 名、组织名、管理组织的 agent 名。
+ * 组织名/管理者：从当前节点沿 parentAgentId 链向上，找第一个设置了 orgName 的节点
+ * （该节点即组织管理者；若执行 agent 自己设置了组织名则管理者即它自己）。
+ * 树未加载或 agent 不在树中时返回 null（调用方不展示该行）。
+ */
+export function resolveAgentContext(agentId?: string | null): { agentName: string; orgName: string | null; orgManagerName: string | null } | null {
+  if (!agentId) return null;
+
+  function findNode(nodes: OrgTreeNode[], id: string): OrgTreeNode | null {
+    for (const n of nodes) {
+      if (n.id === id) return n;
+      const found = findNode(n.children, id);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  const node = findNode(orgTreeState.tree, agentId);
+  if (!node) return null;
+  const agentName = node.customName || node.roleName || agentId;
+
+  let orgNode: OrgTreeNode | null = node;
+  const seen = new Set<string>([agentId]);
+  while (orgNode && !orgNode.orgName) {
+    const parentId = orgNode.parentAgentId;
+    if (!parentId || seen.has(parentId)) { orgNode = null; break; }
+    seen.add(parentId);
+    orgNode = findNode(orgTreeState.tree, parentId);
+  }
+
+  return {
+    agentName,
+    orgName: orgNode?.orgName ?? null,
+    orgManagerName: orgNode ? (orgNode.customName || orgNode.roleName || null) : null,
+  };
+}
