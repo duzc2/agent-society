@@ -1,6 +1,7 @@
 import { registry } from "../../src/platform/core/module_registry.js";
 import { getMimeTypeFromExtension } from "../../src/platform/utils/content/content_type_utils.js";
 import { getWorkspaceManager } from "../../src/platform/services/workspace/workspace_manager.js";
+import { getAutoLoadRegistry } from "./auto_load.js";
 
 /**
  * 注册 save-eval-script 相关的 Hono 路由。
@@ -18,7 +19,7 @@ function registerSaveEvalScriptRoutes({ app, log }) {
       return c.json({ error: "invalid_json", message: err.message }, 400);
     }
 
-    const { workspaceId, script, filename } = body;
+    const { workspaceId, script, filename, autoLoad } = body;
 
     if (!workspaceId || typeof workspaceId !== "string") {
       return c.json({ error: "missing_workspace_id" }, 400);
@@ -56,7 +57,20 @@ function registerSaveEvalScriptRoutes({ app, log }) {
         messageId: `save_eval_${Date.now()}`
       });
 
-      return c.json({ ok: true, path: filePath });
+      // 勾选了「自动加载」：注册到自动加载表（只记录路径，不复制文件）。
+      // 文件先写、注册后加：注册失败只 warn，不使整个保存失败（文件仍在，用户不丢数据）。
+      let autoLoadRegistered = false;
+      if (autoLoad === true) {
+        try {
+          const registry = getAutoLoadRegistry();
+          const res = await registry.add({ workspaceId, path: filePath, name: safeName });
+          autoLoadRegistered = res.ok === true;
+        } catch (err) {
+          void log.warn("自动加载注册失败，文件已保存", { filePath, error: err?.message ?? String(err) });
+        }
+      }
+
+      return c.json({ ok: true, path: filePath, autoLoadRegistered });
     } catch (err) {
       void log.error("保存 eval 脚本失败", { error: err.message, stack: err.stack });
       return c.json({ error: "save_failed", message: err.message }, 500);

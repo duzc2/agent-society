@@ -329,16 +329,21 @@ class UiCommandService {
         const result = await this.executeCommand(command);
         await this.sendResult(command.id, result);
 
-        // eval_js 执行后立即弹出保存提示框
+        // eval_js 执行后立即弹出保存提示框（可勾选「自动加载」）
         if (cmd.type === 'eval_js') {
             const script = cmd.payload?.script;
             const wsId = cmd.payload?._ws;
-            showSaveNotice('是否保存刚才执行的 JavaScript 代码？').then(async (filename) => {
-                if (filename && wsId) {
+            showSaveNotice('是否保存刚才执行的 JavaScript 代码？').then(async (result) => {
+                if (result?.filename && wsId) {
                     await fetch('/api/save-eval-script', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ workspaceId: wsId, script, filename })
+                        body: JSON.stringify({
+                            workspaceId: wsId,
+                            script,
+                            filename: result.filename,
+                            autoLoad: result.autoLoad
+                        })
                     });
                 }
             });
@@ -360,6 +365,43 @@ class UiCommandService {
 
         // 否则包装成 Promise 返回
         return Promise.resolve(commandResult);
+    }
+
+    /**
+     * 执行所有「启用」的自动加载脚本（按注册顺序）。
+     * 每次页面刷新/加载时由 App.vue 调用。
+     *
+     * 注意：必须直接执行，绝不能经心跳 ui_command 通道——
+     * 否则 _handleHeartbeatCommand 会对每个自动加载脚本再次弹出保存提示。
+     * 单个脚本失败不中断后续脚本。
+     */
+    async runAutoLoadScripts(): Promise<void> {
+        try {
+            const res = await fetch('/api/modules/ui_page/auto-load-scripts/executables');
+            if (!res.ok) {
+                console.error('[UiCommandService] 自动加载列表获取失败:', res.status);
+                return;
+            }
+            const data = await res.json();
+            if (!data?.ok) {
+                console.error('[UiCommandService] 自动加载列表获取失败:', data?.message ?? data?.error);
+                return;
+            }
+            // 顺序执行：保证脚本间 DOM 副作用顺序可见（前一个脚本建的元素可被后一个脚本操作）
+            for (const s of data.scripts ?? []) {
+                try {
+                    await this.executeScript(s.script);
+                } catch (err) {
+                    console.error('[UiCommandService] 自动加载脚本执行失败:', s.path, err);
+                }
+            }
+            // 服务端读取失败（文件缺失等）逐条记录，页面不受影响
+            for (const e of data.errors ?? []) {
+                console.error('[UiCommandService] 自动加载脚本读取失败（文件缺失?）:', e.path, e.error);
+            }
+        } catch (err) {
+            console.error('[UiCommandService] 自动加载失败:', err);
+        }
     }
 
     /**

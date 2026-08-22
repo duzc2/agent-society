@@ -2,6 +2,7 @@ import { describe, it, mock, beforeEach } from "node:test";
 import assert from "node:assert";
 import { makeTestLogger } from "../helpers/test_logger.js";
 import { assertCalledWith } from "../helpers/test_runner.js";
+import { makeFakeConfigService } from "../helpers/fake_config_service.js";
 
 // @ts-ignore - 测试中使用简化类型
 import uiPageModule from "../../modules/ui_page/index.js";
@@ -20,6 +21,7 @@ describe("ui_page 模块工具", () => {
     runtime = {
       loggerRoot: { forModule: (name) => makeTestLogger("UIPage|" + name) },
       findWorkspaceIdForAgent: mock.fn(() => null),
+      configService: makeFakeConfigService(),
     };
     await uiPageModule.init(runtime);
   });

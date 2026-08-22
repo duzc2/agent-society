@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web JS 自动加载</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <div class="auto-panel" id="auto-panel">
+
+    <!-- 顶栏 -->
+    <div class="panel-header">
+      <span class="header-title">📄 Web JS 自动加载</span>
+      <span class="header-desc">勾选「自动加载」保存的脚本会在每次页面刷新时按注册顺序自动执行</span>
+      <button type="button" class="btn-sm btn-primary" id="btn-add-script">＋ 添加脚本</button>
+    </div>
+
+    <!-- 结果提示 -->
+    <div class="config-result" id="panel-result" style="display:none"></div>
+
+    <!-- 主列表：搜索 + 表格 -->
+    <div class="list-toolbar">
+      <input type="text" class="search-input" id="search-input" placeholder="搜索名称 / 路径 / 工作区…" autocomplete="off" spellcheck="false">
+      <span class="list-count" id="list-count"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="script-table">
+        <thead>
+          <tr>
+            <th class="col-name">名称</th>
+            <th class="col-path">路径</th>
+            <th class="col-ws">工作区</th>
+            <th class="col-status">状态</th>
+            <th class="col-actions">操作</th>
+          </tr>
+        </thead>
+        <tbody id="auto-scripts-list"></tbody>
+      </table>
+    </div>
+
+    <!-- 添加脚本弹层 -->
+    <div class="modal-overlay" id="add-modal" style="display:none">
+      <div class="modal-card">
+        <div class="modal-header">
+          <span class="modal-title">添加自动加载脚本</span>
+          <button type="button" class="modal-close" id="btn-close-modal" title="关闭">✕</button>
+        </div>
+        <div class="modal-toolbar">
+          <input type="text" class="search-input" id="candidate-search" placeholder="搜索名称 / 路径 / 工作区…" autocomplete="off" spellcheck="false">
+          <span class="list-count" id="candidate-count"></span>
+        </div>
+        <div class="modal-body" id="add-candidates"></div>
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" id="btn-cancel-modal">取消</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="panel.js"></script>
+</body>
+</html>

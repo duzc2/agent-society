@@ -185,6 +185,9 @@ onMounted(() => {
     // 启动 UI 命令服务（处理智能体的页面操作请求）
     uiCommandService.start();
 
+    // 执行自动加载脚本（每次页面刷新时按注册顺序执行）
+    void uiCommandService.runAutoLoadScripts();
+
 });
 
 // 全局错误边界：捕获未处理的 Vue 组件错误

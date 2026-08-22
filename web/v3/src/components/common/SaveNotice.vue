@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue';
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
+import Checkbox from 'primevue/checkbox';
 import { saveNoticeState, hideSaveNotice } from '../../services/saveNoticeService';
 
 const saveMode = ref(false);
@@ -26,9 +27,10 @@ const handleConfirm = () => {
 
 watch([() => saveNoticeState.visible, () => saveNoticeState.version], ([v]) => {
   if (v) {
-    // 每次显示（或版本递增）时重置状态
+    // 每次显示（或版本递增）时重置状态，自动加载默认不勾选
     saveMode.value = false;
     inputValue.value = '';
+    saveNoticeState.autoLoad = false;
   } else {
     saveMode.value = false;
     inputValue.value = '';
@@ -87,6 +89,12 @@ watch([() => saveNoticeState.visible, () => saveNoticeState.version], ([v]) => {
               size="small"
               @click="dismiss"
             />
+          </div>
+          <div class="save-notice-auto-row">
+            <Checkbox v-model="saveNoticeState.autoLoad" binary input-id="save-notice-autoload" />
+            <label for="save-notice-autoload" class="save-notice-auto-label">
+              自动加载（每次刷新页面时自动执行）
+            </label>
           </div>
         </template>
       </div>
@@ -154,6 +162,19 @@ watch([() => saveNoticeState.visible, () => saveNoticeState.version], ([v]) => {
 .save-notice-input {
   flex: 1;
   min-width: 0;
+}
+
+.save-notice-auto-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.save-notice-auto-label {
+  font-size: 12px;
+  color: var(--text-color-secondary, #888);
+  cursor: pointer;
+  user-select: none;
 }
 
 .save-notice-enter-active,
