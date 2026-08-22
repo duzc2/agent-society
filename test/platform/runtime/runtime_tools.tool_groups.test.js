@@ -24,6 +24,8 @@ const workspaceTool = makeToolDef("file_read_lines");
 const networkTool = makeToolDef("http_request");
 const commandTool = makeToolDef("run_javascript");
 const getOrgStructureTool = makeToolDef("get_org_structure");
+const skillTool = makeToolDef("load_skill_detail");
+const chromeTool = makeToolDef("chrome_new_tab");
 
 describe("RuntimeTools - 默认工具组行为", () => {
   describe("getToolDefinitionsForAgent - toolGroups 默认值与 org_management 强制包含", () => {
@@ -36,6 +38,7 @@ describe("RuntimeTools - 默认工具组行为", () => {
       const metaMap = options.metaMap ?? new Map([["agent-1", { roleId: "role-1" }]]);
 
       return {
+        log: { debug() {}, info() {}, warn() {}, error() {} },
         _agentMetaById: metaMap,
         org: {
           getRole: () => ({ toolGroups })
@@ -55,6 +58,12 @@ describe("RuntimeTools - 默认工具组行为", () => {
             if (groupIds.includes("command")) {
               tools.push(commandTool);
             }
+            if (groupIds.includes("skill")) {
+              tools.push(skillTool);
+            }
+            if (groupIds.includes("chrome")) {
+              tools.push(chromeTool);
+            }
             return tools;
           },
           isToolInGroups(toolName, groupIds) {
@@ -64,16 +73,18 @@ describe("RuntimeTools - 默认工具组行为", () => {
             if (toolName === "file_read_lines") return groupIds.includes("workspace");
             if (toolName === "http_request") return groupIds.includes("network");
             if (toolName === "run_javascript") return groupIds.includes("command");
+            if (toolName === "load_skill_detail") return groupIds.includes("skill");
+            if (toolName === "chrome_new_tab") return groupIds.includes("chrome");
             return false;
           },
-          getAllGroupIds: () => ["org_management", "workspace", "network", "command", "model_capability"]
+          getAllGroupIds: () => ["org_management", "workspace", "network", "command", "skill", "chrome", "model_capability"]
         },
         moduleLoader: {
           getToolDefinitions: () => [],
           hasToolName: () => false
         },
         _toolExecutor: {
-          getToolDefinitions: () => [orgMgmtTool, workspaceTool, networkTool, commandTool, getOrgStructureTool]
+          getToolDefinitions: () => [orgMgmtTool, workspaceTool, networkTool, commandTool, getOrgStructureTool, skillTool, chromeTool]
         }
       };
     }
@@ -136,14 +147,36 @@ describe("RuntimeTools - 默认工具组行为", () => {
       assert.strictEqual(names.includes("http_request"), false, "root 不应有 network 工具");
     });
 
-    it("智能体元数据缺失时应返回所有工具（向后兼容）", () => {
+    it("未配置 skill 工具组时技能工具不出现在定义列表中", () => {
+      const runtime = makeRuntime({ toolGroups: null });
+      const runtimeTools = new RuntimeTools(runtime);
+      const defs = runtimeTools.getToolDefinitionsForAgent("agent-1");
+
+      const names = defs.map(d => d?.function?.name);
+      assert.strictEqual(names.includes("load_skill_detail"), false, "不应出现技能工具");
+    });
+
+    it("配置 skill 工具组时技能工具出现在定义列表中", () => {
+      const runtime = makeRuntime({ toolGroups: ["skill"] });
+      const runtimeTools = new RuntimeTools(runtime);
+      const defs = runtimeTools.getToolDefinitionsForAgent("agent-1");
+
+      const names = defs.map(d => d?.function?.name);
+      assert.ok(names.includes("load_skill_detail"), "应出现技能工具");
+    });
+
+    it("智能体元数据缺失时应失败关闭（仅 org_management + 始终允许工具）", () => {
       const runtime = makeRuntime({ metaMap: new Map() });
       const runtimeTools = new RuntimeTools(runtime);
       const defs = runtimeTools.getToolDefinitionsForAgent("nonexistent-agent");
 
       const names = defs.map(d => d?.function?.name);
-      // 缺少元数据时返回 getToolDefinitions() 的全部工具
-      assert.ok(names.length > 0, "应返回工具");
+      // 安全边界：元数据缺失时绝不返回全部工具，仅 org_management + 始终允许工具
+      assert.ok(names.includes("find_role_by_name"), "应有 org_management 工具");
+      assert.ok(names.includes("get_org_structure"), "get_org_structure 始终可见");
+      assert.strictEqual(names.includes("file_read_lines"), false, "不应泄漏 workspace 工具");
+      assert.strictEqual(names.includes("load_skill_detail"), false, "不应泄漏 skill 工具");
+      assert.strictEqual(names.includes("chrome_new_tab"), false, "不应泄漏 chrome 工具");
     });
   });
 
@@ -153,6 +186,7 @@ describe("RuntimeTools - 默认工具组行为", () => {
       const metaMap = options.metaMap ?? new Map([["agent-1", { roleId: "role-1" }]]);
 
       return {
+        log: { debug() {}, info() {}, warn() {}, error() {} },
         _agentMetaById: metaMap,
         org: {
           getRole: () => ({ toolGroups })
@@ -165,12 +199,14 @@ describe("RuntimeTools - 默认工具组行为", () => {
               get_org_structure: "org_management",
               file_read_lines: "workspace",
               http_request: "network",
-              run_javascript: "command"
+              run_javascript: "command",
+              load_skill_detail: "skill",
+              chrome_new_tab: "chrome"
             };
             const group = mapping[toolName];
             return group ? groupIds.includes(group) : false;
           },
-          getAllGroupIds: () => ["org_management", "workspace", "network", "command"]
+          getAllGroupIds: () => ["org_management", "workspace", "network", "command", "skill", "chrome"]
         },
         moduleLoader: {
           hasToolName: () => false
@@ -219,11 +255,54 @@ describe("RuntimeTools - 默认工具组行为", () => {
       assert.strictEqual(runtimeTools.isToolAvailableForAgent("root", "get_org_structure"), true);
     });
 
-    it("智能体不存在时应允许所有工具（向后兼容）", () => {
+    it("智能体不存在时应失败关闭（仅允许 org_management）", () => {
       const runtime = makeRuntime({ metaMap: new Map() });
       const runtimeTools = new RuntimeTools(runtime);
 
-      assert.strictEqual(runtimeTools.isToolAvailableForAgent("nonexistent", "file_read_lines"), true);
+      // 安全边界：元数据缺失时绝不放开全部工具，仅 org_management
+      assert.strictEqual(runtimeTools.isToolAvailableForAgent("nonexistent", "find_role_by_name"), true);
+      assert.strictEqual(runtimeTools.isToolAvailableForAgent("nonexistent", "file_read_lines"), false);
+      assert.strictEqual(runtimeTools.isToolAvailableForAgent("nonexistent", "chrome_new_tab"), false);
     });
+
+    describe("模块工具组归属强制 - 未分配 chrome 工具组的智能体不能调用 chrome 工具", () => {
+    it("toolGroups 为 null 时模块工具不可用", () => {
+      const runtime = makeRuntime({ toolGroups: null });
+      const runtimeTools = new RuntimeTools(runtime);
+
+      assert.strictEqual(runtimeTools.isToolAvailableForAgent("agent-1", "chrome_new_tab"), false,
+        "未分配 chrome 工具组时模块工具必须被拒绝");
+    });
+
+    it("toolGroups 包含 chrome 时模块工具可用", () => {
+      const runtime = makeRuntime({ toolGroups: ["chrome"] });
+      const runtimeTools = new RuntimeTools(runtime);
+
+      assert.strictEqual(runtimeTools.isToolAvailableForAgent("agent-1", "chrome_new_tab"), true);
+    });
+
+    it("root 智能体不能使用模块工具", () => {
+      const runtime = makeRuntime({ toolGroups: ["chrome"] });
+      const runtimeTools = new RuntimeTools(runtime);
+
+      assert.strictEqual(runtimeTools.isToolAvailableForAgent("root", "chrome_new_tab"), false);
+    });
+  });
+
+  describe("skill 工具组强制 - 未分配 skill 工具组的智能体不能使用技能工具", () => {
+    it("toolGroups 为 null 时技能工具不可用", () => {
+      const runtime = makeRuntime({ toolGroups: null });
+      const runtimeTools = new RuntimeTools(runtime);
+
+      assert.strictEqual(runtimeTools.isToolAvailableForAgent("agent-1", "load_skill_detail"), false);
+    });
+
+    it("toolGroups 包含 skill 时技能工具可用", () => {
+      const runtime = makeRuntime({ toolGroups: ["skill"] });
+      const runtimeTools = new RuntimeTools(runtime);
+
+      assert.strictEqual(runtimeTools.isToolAvailableForAgent("agent-1", "load_skill_detail"), true);
+    });
+  });
   });
 });

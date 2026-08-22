@@ -27,6 +27,21 @@ export const BUILTIN_TOOL_GROUPS = {
   network: {
     description: "HTTP 请求工具 - 用于调用已知的、确定的 HTTP/HTTPS API 接口（如 REST API、JSON API 等）。仅适用于有明确接口规范的场景。如需模拟人类浏览网页、处理动态渲染页面、执行页面交互操作，请使用 chrome 工具组。",
     tools: ["http_request"]
+  },
+  skill: {
+    description: "技能管理工具 - 用于加载、创建、管理自定义技能脚本，以及维护当前智能体的系统提示词追加内容。",
+    tools: [
+      "load_skill_detail", "run_skill_script", "skill_list", "skill_get", "skill_create",
+      "skill_copy", "skill_read_file", "skill_write_file", "skill_create_file",
+      "skill_create_folder", "skill_delete_entry", "skill_rename_entry", "skill_set_status",
+      "skill_delete", "skill_bind_to_agent", "skill_unbind_from_agent", "forget_skill",
+      "get_system_prompt_appendix", "add_system_prompt_appendix_item",
+      "remove_system_prompt_appendix_item", "update_system_prompt_appendix_item"
+    ]
+  },
+  context: {
+    description: "上下文状态工具 - 查询当前智能体的上下文使用状态。",
+    tools: ["get_context_status"]
   }
 };
 

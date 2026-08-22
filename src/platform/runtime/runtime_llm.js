@@ -90,8 +90,12 @@ export class RuntimeLlm {
     let finalPrompt = composed + "\n\n" + nameSection + runtimeInfo + taskBriefText + toolRules + modulePromptAppendix;
 
     // 加载技能提示词
+    // 【安全】仅当岗位拥有 skill 工具组时注入——否则提示词会指示 LLM 调用
+    // 执行端已拒绝的技能工具（load_skill_detail 等），导致反复调用被拒
     let skillPrompt = "";
-    skillPrompt = await this.runtime.skillsService.buildAgentSkillPrompt(agentId);
+    if (this.runtime.isToolAvailableForAgent(agentId, "load_skill_detail")) {
+      skillPrompt = await this.runtime.skillsService.buildAgentSkillPrompt(agentId);
+    }
     if (skillPrompt.trim()) {
       finalPrompt += "\n\n" + skillPrompt.trim();
     }

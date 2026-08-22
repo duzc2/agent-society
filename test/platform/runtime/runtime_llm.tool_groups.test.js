@@ -107,6 +107,8 @@ describe("RuntimeLlm - tool prompt handling", () => {
       },
       _agentTaskBriefs: new Map(),
 
+      // 工具组权限检查：技能提示词仅在岗位拥有 skill 工具组时注入
+      isToolAvailableForAgent: () => true,
       skillsService: { buildAgentSkillPrompt: async () => "" },
       log: makeTestLogger("RuntimeLLM")
     };
@@ -169,6 +171,8 @@ describe("RuntimeLlm - tool prompt handling", () => {
       },
       _agentTaskBriefs: new Map(),
 
+      // 工具组权限检查：技能提示词仅在岗位拥有 skill 工具组时注入
+      isToolAvailableForAgent: () => true,
       skillsService: { buildAgentSkillPrompt: async () => "" },
       log: makeTestLogger("RuntimeLLM")
     };
@@ -228,6 +232,8 @@ describe("RuntimeLlm - tool prompt handling", () => {
       },
       _agentTaskBriefs: new Map(),
 
+      // 工具组权限检查：技能提示词仅在岗位拥有 skill 工具组时注入
+      isToolAvailableForAgent: () => true,
       skillsService: { buildAgentSkillPrompt: async () => "" },
       log: makeTestLogger("RuntimeLLM")
     };
@@ -307,6 +313,8 @@ describe("RuntimeLlm - tool prompt handling", () => {
       },
       _agentTaskBriefs: new Map(),
 
+      // 工具组权限检查：技能提示词仅在岗位拥有 skill 工具组时注入
+      isToolAvailableForAgent: () => true,
       skillsService: { buildAgentSkillPrompt: async () => "" },
       log: makeTestLogger("RuntimeLLM")
     };

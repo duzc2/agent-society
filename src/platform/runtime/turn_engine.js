@@ -241,7 +241,10 @@ export class TurnEngine {
 
       this.runtime._state.setAgentComputePhase(agentId, "正在准备 LLM 请求...");
 
-      const tools = this.runtime.getToolDefinitionsForAgent(turn.ctx.agentId);
+      // 【安全】必须传 step() 的权威 agentId：生产 ctx（buildAgentContext）只有 agent 字段，
+      // 没有 agentId；传 ctx.agentId 恒为 undefined，会触发 getToolDefinitionsForAgent 的
+      // 失败关闭兜底（仅 org_management），或曾经触发过"返回全部工具"的权限泄漏。
+      const tools = this.runtime.getToolDefinitionsForAgent(agentId);
       turn.phase = "waiting_llm";
 
       const llmMeta = {

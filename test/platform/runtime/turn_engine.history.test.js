@@ -182,7 +182,9 @@ describe("TurnEngine conversation history", () => {
     };
 
     const engine = new TurnEngine(runtime);
-    const ctx = { agentId: "agent-1", agent: { id: "agent-1" } };
+    // 生产 ctx 形状：buildAgentContext 只设置 agent，从不设置 agentId。
+    // 去掉 agentId 字段以真实模拟生产环境，守护 getToolDefinitionsForAgent 收到权威 agentId。
+    const ctx = { agent: { id: "agent-1" } };
 
     await engine.enqueueMessageTurn("agent-1", ctx, {
       id: "m1",

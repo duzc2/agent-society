@@ -22,6 +22,9 @@ describe("RuntimeLlm - 技能提示词集成", () => {
         setAgentComputePhase: () => {}
       },
       getSystemPromptAppendix: () => "",
+      // 工具组权限检查：技能提示词仅在岗位拥有 skill 工具组时注入。
+      // 默认 mock 为 true（授权），门控用例中改为 false 验证不注入。
+      isToolAvailableForAgent: () => true,
       skillsService: {
         buildAgentSkillPrompt: async () => ""
       },
@@ -110,6 +113,24 @@ describe("RuntimeLlm - 技能提示词集成", () => {
       const prompt = await runtimeLlm.buildSystemPromptForAgent(mockCtx);
 
       assert.ok(prompt.includes("test string result"));
+    });
+
+    it("岗位未分配 skill 工具组时不应注入技能提示词", async () => {
+      mockRuntime.isToolAvailableForAgent = () => false;
+      mockRuntime.skillsService.buildAgentSkillPrompt = async () => "# 技能提示词\n\n## JavaScript";
+
+      const prompt = await runtimeLlm.buildSystemPromptForAgent(mockCtx);
+
+      assert.ok(!prompt.includes("技能提示词"), "未授权时不得注入技能提示词");
+    });
+
+    it("岗位拥有 skill 工具组时才注入技能提示词", async () => {
+      mockRuntime.isToolAvailableForAgent = () => true;
+      mockRuntime.skillsService.buildAgentSkillPrompt = async () => "# 技能提示词\n\n## JavaScript";
+
+      const prompt = await runtimeLlm.buildSystemPromptForAgent(mockCtx);
+
+      assert.ok(prompt.includes("技能提示词"), "授权时应注入技能提示词");
     });
   });
 

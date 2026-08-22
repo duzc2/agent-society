@@ -101,7 +101,28 @@ export class RuntimeTools {
       delete_todo_item: "org_management",
       set_org_name: "org_management",
       list_tool_groups: "model_capability",
-      update_my_tool_groups: "model_capability"
+      update_my_tool_groups: "model_capability",
+      load_skill_detail: "skill",
+      run_skill_script: "skill",
+      skill_list: "skill",
+      skill_get: "skill",
+      skill_create: "skill",
+      skill_copy: "skill",
+      skill_read_file: "skill",
+      skill_write_file: "skill",
+      skill_create_file: "skill",
+      skill_create_folder: "skill",
+      skill_delete_entry: "skill",
+      skill_rename_entry: "skill",
+      skill_set_status: "skill",
+      skill_delete: "skill",
+      skill_bind_to_agent: "skill",
+      skill_unbind_from_agent: "skill",
+      forget_skill: "skill",
+      get_system_prompt_appendix: "skill",
+      add_system_prompt_appendix_item: "skill",
+      remove_system_prompt_appendix_item: "skill",
+      update_system_prompt_appendix_item: "skill"
     };
     
     // 按工具组分类
@@ -111,6 +132,7 @@ export class RuntimeTools {
       workspace: [],
       command: [],
       network: [],
+      skill: [],
       context: [],
       console: []
     };
@@ -146,38 +168,43 @@ export class RuntimeTools {
   /**
    * 获取指定智能体可用的工具定义。
    * 根据智能体岗位配置的工具组返回相应的工具定义。
-   * 
+   *
    * 【权限规则】
    * - root 岗位：只有 org_management 工具组
    * - 其他岗位：根据岗位配置的 toolGroups 返回工具
    * - 未配置 toolGroups：仅返回 org_management（最保守默认值）
-   * - 模块工具：对所有非 root 岗位可用
-   * 
+   * - 模块工具（如 chrome_*）：归属其模块注册的工具组，按岗位 toolGroups 过滤
+   * - 智能体元数据/岗位缺失：失败关闭，仅返回 org_management（不泄漏全部工具）
+   *
    * @param {string} agentId - 智能体ID
    * @returns {any[]} 工具定义列表
    */
   getToolDefinitionsForAgent(agentId) {
     const runtime = this.runtime;
     const alwaysAllowedToolNames = this._buildAlwaysAllowedToolNames();
-    
+
     // root 岗位硬编码只有 org_management
     if (agentId === "root") {
       const defs = runtime.toolGroupManager.getToolDefinitions(["org_management"]);
       return this._appendAlwaysAllowedTools(defs, alwaysAllowedToolNames);
     }
-    
+
     // 获取智能体元数据
     const meta = runtime._agentMetaById.get(agentId);
     if (!meta) {
-      // 智能体不存在，返回所有工具（向后兼容）
-      return this.getToolDefinitions();
+      // 【安全】智能体不存在：失败关闭，仅返回 org_management，绝不泄漏全部工具
+      void runtime.log.warn("工具定义获取失败关闭：智能体元数据缺失", { agentId });
+      const defs = runtime.toolGroupManager.getToolDefinitions(["org_management"]);
+      return this._appendAlwaysAllowedTools(defs, alwaysAllowedToolNames);
     }
-    
+
     // 获取岗位信息
     const role = runtime.org.getRole(meta.roleId);
     if (!role) {
-      // 岗位不存在，返回所有工具（向后兼容）
-      return this.getToolDefinitions();
+      // 【安全】岗位不存在：失败关闭，仅返回 org_management，绝不泄漏全部工具
+      void runtime.log.warn("工具定义获取失败关闭：岗位不存在", { agentId, roleId: meta.roleId });
+      const defs = runtime.toolGroupManager.getToolDefinitions(["org_management"]);
+      return this._appendAlwaysAllowedTools(defs, alwaysAllowedToolNames);
     }
     
     // 获取岗位配置的工具组，未配置则仅使用 org_management（最保守默认值）
@@ -197,12 +224,14 @@ export class RuntimeTools {
 
   /**
    * 检查工具是否对指定智能体可用。
-   * 
+   *
    * 【权限规则】
-   * - 模块工具：对所有非 root 岗位可用
+   * - 始终允许：get_org_structure 与模型能力工具（call_*_model）
    * - root 岗位：只能使用 org_management 工具组
-   * - 其他岗位：根据岗位配置的 toolGroups 检查
-   * 
+   * - 其他岗位：根据岗位配置的 toolGroups 检查（模块工具同样按工具组检查，
+   *   模块工具组由模块加载时注册进 ToolGroupManager，不存在"模块工具对所有岗位可用"的例外）
+   * - 智能体元数据/岗位缺失：失败关闭，仅允许 org_management（不放开全部工具）
+   *
    * @param {string} agentId - 智能体ID
    * @param {string} toolName - 工具名称
    * @returns {boolean} 是否可用
@@ -210,29 +239,26 @@ export class RuntimeTools {
   isToolAvailableForAgent(agentId, toolName) {
     const runtime = this.runtime;
     if (toolName === "get_org_structure" || this._isModelCapabilityTool(toolName)) return true;
-    
-    // 检查是否是模块工具（模块工具对所有非 root 岗位可用）
-    if (runtime.moduleLoader.hasToolName(toolName)) {
-      return agentId !== "root";
-    }
-    
+
     // root 岗位硬编码只有 org_management
     if (agentId === "root") {
       return runtime.toolGroupManager.isToolInGroups(toolName, ["org_management"]);
     }
-    
+
     // 获取智能体元数据
     const meta = runtime._agentMetaById.get(agentId);
     if (!meta) {
-      // 智能体不存在，允许所有工具（向后兼容）
-      return true;
+      // 【安全】智能体不存在：失败关闭，仅允许 org_management，绝不放开全部工具
+      void runtime.log.warn("工具权限检查失败关闭：智能体元数据缺失", { agentId, toolName });
+      return runtime.toolGroupManager.isToolInGroups(toolName, ["org_management"]);
     }
-    
+
     // 获取岗位信息
     const role = runtime.org.getRole(meta.roleId);
     if (!role) {
-      // 岗位不存在，允许所有工具（向后兼容）
-      return true;
+      // 【安全】岗位不存在：失败关闭，仅允许 org_management，绝不放开全部工具
+      void runtime.log.warn("工具权限检查失败关闭：岗位不存在", { agentId, roleId: meta.roleId, toolName });
+      return runtime.toolGroupManager.isToolInGroups(toolName, ["org_management"]);
     }
     
     // 获取岗位配置的工具组，未配置则仅使用 org_management（最保守默认值）
@@ -343,14 +369,38 @@ export class RuntimeTools {
    */
   async executeToolCall(ctx, toolName, args) {
     const runtime = this.runtime;
-    
+    const agentId = ctx?.agent?.id ?? null;
+
     try {
+      // 【安全】工具组归属校验：本方法是唯一执行漏斗，在此强制拦截未授权工具调用。
+      // 即使 LLM 工具列表已被正确过滤，也要在执行业拦截"列表外但被硬调"的工具
+      // （如提示词注入诱导），执行端是最终安全边界。
+      if (agentId === null || !this.isToolAvailableForAgent(agentId, toolName)) {
+        const message = `agent ${agentId ?? "<unknown>"} 未获授权调用工具 ${toolName}`;
+        const err = new Error(message);
+        void runtime.log.error("工具调用被拒绝（未授权）", {
+          // 业务信息：哪个 agent 尝试调用什么未授权工具，传了哪些参数
+          agentId,
+          toolName,
+          args: args ?? null,
+          messageId: ctx?.currentMessage?.id ?? null,
+          taskId: ctx?.currentMessage?.taskId ?? null,
+          // 技术信息：异常详情
+          message,
+          stack: err.stack,
+          name: err.name,
+          code: "tool_not_authorized"
+        });
+        // 可序列化拒绝结果：会作为 tool result 回传给 LLM，模型能感知到被拒绝
+        return { error: "tool_not_authorized", toolName, agentId, message };
+      }
+
       void runtime.log.debug("执行工具调用", {
-        agentId: ctx.agent?.id ?? null,
+        agentId,
         toolName,
         args: args ?? null
       });
-      
+
       // 委托给 ToolExecutor 处理所有工具调用
       return await runtime._toolExecutor.executeToolCall(ctx, toolName, args);
     } catch (err) {
