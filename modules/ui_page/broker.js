@@ -90,6 +90,22 @@ class UiCommandBroker {
 
     return { ok: true };
   }
+
+  /**
+   * 清理一条无人等待的命令（如"运行预览"：只广播、客户端不回传结果）。
+   * 删除可能存在的 pending，并清除心跳消息，防止页面刷新后 drain 重复执行。
+   * @param {string} commandId
+   */
+  clearCommand(commandId) {
+    const pending = this._pendingResultsByCommandId.get(commandId);
+    if (pending) {
+      clearTimeout(pending.timeoutHandle);
+      this._pendingResultsByCommandId.delete(commandId);
+    }
+    if (this._heartbeatBroker) {
+      this._heartbeatBroker.clearMessage(Number(commandId));
+    }
+  }
 }
 
 function registerUiCommandRoutes({ app, log, broker }) {

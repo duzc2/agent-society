@@ -106,6 +106,7 @@ function render() {
           <input type="checkbox" class="auto-toggle" data-id="${escapeHtml(s.id)}" ${s.enabled === false ? '' : 'checked'}>
           <span>启用</span>
         </label>
+        <button type="button" class="btn-run auto-run" data-id="${escapeHtml(s.id)}" title="执行一次该脚本，确认效果">运行</button>
         <button type="button" class="btn-danger auto-remove" data-id="${escapeHtml(s.id)}" title="移除自动加载（不删除文件）">删除</button>
       </td>
     </tr>
@@ -126,6 +127,21 @@ async function toggleEnabled(id, enabled) {
   }
   allScripts = data.scripts || [];
   render();
+}
+
+/** 运行预览：在主页面上下文执行一次该脚本，确认效果（不弹保存提示） */
+async function runScript(id) {
+  const res = await fetch(API_BASE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, run: true })
+  });
+  const data = await res.json();
+  if (!data.ok) {
+    showResult('error', data.message || data.error);
+    return;
+  }
+  showResult('success', '已发送运行指令，请在主页面查看效果');
 }
 
 /** 删除（仅移除自动加载记录，不删除工作区文件） */
@@ -189,12 +205,28 @@ function renderCandidates() {
       <span class="candidate-name">${escapeHtml(c.name)}</span>
       <span class="candidate-path">${escapeHtml(c.path)}</span>
       <span class="candidate-ws">${escapeHtml(c.workspaceId)}</span>
+      <button type="button" class="btn-run candidate-run" data-ws="${escapeHtml(c.workspaceId)}" data-path="${escapeHtml(c.path)}" title="执行一次该脚本，确认效果">运行</button>
     </div>
   `).join('');
 }
 
 function closeAddModal() {
   document.getElementById('add-modal').style.display = 'none';
+}
+
+/** 候选运行预览：未注册脚本也可在主页面上下文执行一次，确认效果 */
+async function runCandidate(workspaceId, scriptPath) {
+  const res = await fetch(API_BASE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspaceId, path: scriptPath, run: true })
+  });
+  const data = await res.json();
+  if (!data.ok) {
+    showResult('error', data.message || data.error);
+    return;
+  }
+  showResult('success', '已发送运行指令，请在主页面查看效果');
 }
 
 /** 添加脚本到自动加载（仅记录路径，不复制文件） */
@@ -250,6 +282,11 @@ if (list) {
     }
   });
   list.addEventListener('click', (e) => {
+    const runBtn = e.target.closest ? e.target.closest('.auto-run') : null;
+    if (runBtn) {
+      runScript(runBtn.dataset.id).catch((err) => showResult('error', err.message));
+      return;
+    }
     const btn = e.target.closest ? e.target.closest('.auto-remove') : null;
     if (btn) {
       removeScript(btn.dataset.id).catch((err) => showResult('error', err.message));
@@ -280,6 +317,14 @@ if (addModal) {
       closeAddModal();
       return;
     }
+    // 候选行内"运行"按钮：预览执行，不触发添加
+    const runBtn = e.target.closest ? e.target.closest('.candidate-run') : null;
+    if (runBtn) {
+      e.stopPropagation();
+      runCandidate(runBtn.dataset.ws, runBtn.dataset.path).catch((err) => showResult('error', err.message));
+      return;
+    }
+    // 点击候选行：添加脚本
     const item = e.target.closest ? e.target.closest('.candidate-item') : null;
     if (item) {
       addCandidate(item.dataset.ws, item.dataset.path).catch((err) => showResult('error', err.message));

@@ -327,13 +327,24 @@ class UiCommandService {
 
         console.log('[UiCommandService] 收到命令:', cmd.type, message.messageId);
         const result = await this.executeCommand(command);
-        await this.sendResult(command.id, result);
+        // _preview 为面板"运行"按钮发起的预览执行：服务端无人等待结果，
+        // 回传会触发 command_not_pending 404，故跳过
+        if (!cmd.payload?._preview) {
+            await this.sendResult(command.id, result);
+        }
 
-        // eval_js 执行后立即弹出保存提示框（可勾选「自动加载」）
-        if (cmd.type === 'eval_js') {
+        // eval_js 执行后立即弹出保存提示框（可勾选「自动加载」）；
+        // _preview 为面板"运行"按钮发起的预览执行，不弹保存提示
+        if (cmd.type === 'eval_js' && !cmd.payload?._preview) {
             const script = cmd.payload?.script;
             const wsId = cmd.payload?._ws;
-            showSaveNotice('是否保存刚才执行的 JavaScript 代码？').then(async (result) => {
+            // 连续多次执行会产生多个提示框并列显示（最早在下、最新在上），互不替换；
+            // purpose/suggestedFilename 来自工具参数，用于展示目的与预填建议文件名
+            showSaveNotice({
+                message: '是否保存刚才执行的 JavaScript 代码？',
+                purpose: cmd.payload?.purpose,
+                suggestedFilename: cmd.payload?.suggestedFilename,
+            }).then(async (result) => {
                 if (result?.filename && wsId) {
                     await fetch('/api/save-eval-script', {
                         method: 'POST',

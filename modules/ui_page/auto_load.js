@@ -145,6 +145,37 @@ export function createAutoLoadRegistry({ configService, log }) {
     },
 
     /**
+     * 读取指定条目的脚本内容（供面板"运行"预览）。
+     * @param {string} id
+     * @returns {Promise<{ok: true, entry: object, script: string} | {ok: false, error: string, message?: string}>}
+     */
+    async getScriptContent(id) {
+      const entry = _scripts.find((s) => s.id === id);
+      if (!entry) return { ok: false, error: "not_found" };
+      try {
+        const script = await _readWorkspaceFile(entry);
+        return { ok: true, entry, script };
+      } catch (err) {
+        return { ok: false, error: "read_failed", message: err?.message ?? String(err) };
+      }
+    },
+
+    /**
+     * 按 workspaceId+path 直接读取文件内容（供面板候选列表"运行"预览，条目未注册也可运行）。
+     * @param {string} workspaceId
+     * @param {string} scriptPath 工作区内相对路径（如 ui_page_js/foo.js）
+     * @returns {Promise<{ok: true, script: string} | {ok: false, error: string, message?: string}>}
+     */
+    async getFileContent(workspaceId, scriptPath) {
+      try {
+        const script = await _readWorkspaceFile({ workspaceId, path: scriptPath });
+        return { ok: true, script };
+      } catch (err) {
+        return { ok: false, error: "read_failed", message: err?.message ?? String(err) };
+      }
+    },
+
+    /**
      * 枚举所有工作区 ui_page_js/ 下的可添加脚本（供面板"添加脚本"使用）。
      * 排除已在注册表中的条目（无论启用与否）；某工作区无该目录或读取失败时跳过。
      * @returns {Promise<Array<{workspaceId: string, path: string, name: string}>>}

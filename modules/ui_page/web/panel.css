@@ -203,11 +203,11 @@ body {
   opacity: 0.55;
 }
 
-.col-name { width: 18%; }
-.col-path { width: 34%; }
-.col-ws { width: 22%; }
-.col-status { width: 13%; }
-.col-actions { width: 13%; text-align: right !important; }
+.col-name { width: 14%; }
+.col-path { width: 28%; }
+.col-ws { width: 17%; }
+.col-status { width: 11%; }
+.col-actions { width: 30%; text-align: right !important; }
 
 .cell-name {
   font-weight: 600;
@@ -330,6 +330,23 @@ body {
   background: var(--danger-weak);
 }
 
+/* ===== 运行预览按钮 ===== */
+.btn-run {
+  padding: 3px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent-weak);
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.btn-run:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
 /* ===== 添加脚本弹层 ===== */
 .modal-overlay {
   position: fixed;
@@ -407,7 +424,7 @@ body {
 /* ===== 候选条目（紧凑行） ===== */
 .candidate-item {
   display: grid;
-  grid-template-columns: minmax(80px, 1fr) minmax(140px, 2fr) minmax(90px, 1fr);
+  grid-template-columns: minmax(80px, 1fr) minmax(140px, 2fr) minmax(90px, 1fr) 56px;
   gap: 8px;
   align-items: center;
   padding: 6px 10px;
@@ -416,6 +433,10 @@ body {
   border-radius: 6px;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
+}
+
+.candidate-item .btn-run {
+  justify-self: end;
 }
 
 .candidate-item:hover {

@@ -7,15 +7,17 @@
  *
  * 模板：test/modules/localcmd/policies_api.test.js（直接 import 模块 → init(mockRuntime) → 调 handler）
  */
-import { describe, it, beforeEach, afterEach } from "node:test";
+import { describe, it, mock, beforeEach, afterEach } from "node:test";
 import assert from "node:assert";
 import path from "node:path";
 import os from "node:os";
 import fsp from "node:fs/promises";
 import { makeTestLogger, testLoggerRoot } from "../helpers/test_logger.js";
 import { makeFakeConfigService } from "../helpers/fake_config_service.js";
+import { assertCalledWith } from "../helpers/test_runner.js";
 import { createAutoLoadRegistry } from "../../modules/ui_page/auto_load.js";
 import uiPageModule from "../../modules/ui_page/index.js";
+import { _setBroker } from "../../modules/ui_page/broker.js";
 import {
   WorkspaceManager,
   _setTestWorkspaceManager,
@@ -218,6 +220,69 @@ describe("createAutoLoadRegistry.getExecutables", () => {
     assert.strictEqual(scripts.length, 0);
     assert.strictEqual(errors.length, 1);
     assert.match(errors[0].error, /超出工作区范围/);
+  });
+
+  it("getScriptContent：条目存在且文件可读 → 返回内容", async () => {
+    const reg = createAutoLoadRegistry({ configService, log });
+    await reg.load();
+    await writeWorkspaceFile("ws-1", "ui_page_js/foo.js", "const a = 1;");
+    await reg.add({ workspaceId: "ws-1", path: "ui_page_js/foo.js" });
+
+    const result = await reg.getScriptContent("ws-1:ui_page_js/foo.js");
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.script, "const a = 1;");
+    assert.strictEqual(result.entry.path, "ui_page_js/foo.js");
+  });
+
+  it("getScriptContent：条目不存在 → not_found", async () => {
+    const reg = createAutoLoadRegistry({ configService, log });
+    await reg.load();
+    const result = await reg.getScriptContent("no:such");
+    assert.deepStrictEqual(result, { ok: false, error: "not_found" });
+  });
+
+  it("getScriptContent：文件缺失 → read_failed", async () => {
+    const reg = createAutoLoadRegistry({ configService, log });
+    await reg.load();
+    await reg.add({ workspaceId: "ws-1", path: "ui_page_js/missing.js" });
+    const result = await reg.getScriptContent("ws-1:ui_page_js/missing.js");
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.error, "read_failed");
+  });
+
+  it("getScriptContent：路径越界条目 → read_failed", async () => {
+    const reg = createAutoLoadRegistry({ configService, log });
+    await reg.load();
+    await reg.add({ workspaceId: "ws-1", path: "../evil.js" });
+    const result = await reg.getScriptContent("ws-1:../evil.js");
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.error, "read_failed");
+  });
+
+  it("getFileContent：按 workspaceId+path 直接读文件（未注册条目也可运行）", async () => {
+    const reg = createAutoLoadRegistry({ configService, log });
+    await reg.load();
+    await writeWorkspaceFile("ws-1", "ui_page_js/foo.js", "const a = 1;");
+
+    const result = await reg.getFileContent("ws-1", "ui_page_js/foo.js");
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.script, "const a = 1;");
+  });
+
+  it("getFileContent：文件缺失 → read_failed", async () => {
+    const reg = createAutoLoadRegistry({ configService, log });
+    await reg.load();
+    const result = await reg.getFileContent("ws-1", "ui_page_js/missing.js");
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.error, "read_failed");
+  });
+
+  it("getFileContent：路径越界 → read_failed", async () => {
+    const reg = createAutoLoadRegistry({ configService, log });
+    await reg.load();
+    const result = await reg.getFileContent("ws-1", "../evil.js");
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.error, "read_failed");
   });
 });
 
@@ -477,5 +542,185 @@ describe("ui_page 模块 HTTP handler（添加脚本）", () => {
     assert.strictEqual(bad2.error, "invalid_params");
     const bad3 = await handler(makeReq("POST"), null, ["auto-load-scripts"], { workspaceId: "ws-1", path: "../ui_page_js/foo.js" });
     assert.strictEqual(bad3.error, "invalid_params");
+  });
+});
+
+describe("ui_page 模块 HTTP handler（运行预览）", () => {
+  let handler;
+  let configService;
+  let dirs;
+  let enqueueSpy;
+  let clearSpy;
+
+  beforeEach(async () => {
+    dirs = makeTempDirs();
+    configService = makeFakeConfigService();
+    _setTestWorkspaceManager(new WorkspaceManager({
+      dataDir: dirs.root,
+      workspacesDir: dirs.wsDir,
+      logger: makeTestLogger("WM|test"),
+    }));
+    // 注入 mock broker：验证 run 广播的 eval_js 命令与延迟清理
+    enqueueSpy = mock.fn(() => ({ ok: true, commandId: "cmd-run" }));
+    clearSpy = mock.fn();
+    _setBroker({
+      enqueueToActive: enqueueSpy,
+      waitForResult: mock.fn(async () => ({ ok: true, result: null })),
+      clearCommand: clearSpy,
+    });
+    try { await uiPageModule.shutdown(); } catch {}
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService });
+    handler = uiPageModule.getHttpHandler();
+  });
+
+  afterEach(async () => {
+    try { await uiPageModule.shutdown(); } catch {}
+    _setBroker(null);
+    try { await fsp.rm(dirs.root, { recursive: true, force: true }); } catch {}
+    _resetWorkspaceManager();
+  });
+
+  function makeReq(method = "GET") {
+    return { method, url: "/api/modules/ui_page/auto-load-scripts" };
+  }
+
+  it("POST {id, run:true} 读内容并广播 eval_js（带 _preview 标记），不弹保存提示", async () => {
+    await writeWorkspaceFile(dirs.wsDir, "ws-1", "ui_page_js/foo.js", "const a = 1;");
+    await configService.saveModuleConfig("ui_page", {
+      autoLoadScripts: [{
+        id: "ws-1:ui_page_js/foo.js",
+        name: "foo",
+        workspaceId: "ws-1",
+        path: "ui_page_js/foo.js",
+        enabled: true,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }],
+    });
+    try { await uiPageModule.shutdown(); } catch {}
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService });
+    handler = uiPageModule.getHttpHandler();
+
+    const result = await handler(makeReq("POST"), null, ["auto-load-scripts"], { id: "ws-1:ui_page_js/foo.js", run: true });
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.run, true);
+    assert.strictEqual(result.path, "ui_page_js/foo.js");
+    assertCalledWith(enqueueSpy, {
+      type: "eval_js",
+      payload: { script: "const a = 1;", _ws: "ws-1", _preview: true }
+    });
+  });
+
+  it("run 不存在的条目 → not_found，不广播", async () => {
+    const result = await handler(makeReq("POST"), null, ["auto-load-scripts"], { id: "no:such", run: true });
+    assert.strictEqual(result.error, "not_found");
+    assert.strictEqual(enqueueSpy.mock.callCount(), 0);
+  });
+
+  it("run 文件缺失 → read_failed，不广播", async () => {
+    await configService.saveModuleConfig("ui_page", {
+      autoLoadScripts: [{
+        id: "ws-1:ui_page_js/missing.js",
+        name: "missing",
+        workspaceId: "ws-1",
+        path: "ui_page_js/missing.js",
+        enabled: true,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }],
+    });
+    try { await uiPageModule.shutdown(); } catch {}
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService });
+    handler = uiPageModule.getHttpHandler();
+
+    const result = await handler(makeReq("POST"), null, ["auto-load-scripts"], { id: "ws-1:ui_page_js/missing.js", run: true });
+    assert.strictEqual(result.error, "read_failed");
+    assert.strictEqual(enqueueSpy.mock.callCount(), 0);
+  });
+
+  it("心跳通道不可用 → dispatch_failed", async () => {
+    await writeWorkspaceFile(dirs.wsDir, "ws-1", "ui_page_js/foo.js", "x");
+    await configService.saveModuleConfig("ui_page", {
+      autoLoadScripts: [{
+        id: "ws-1:ui_page_js/foo.js",
+        name: "foo",
+        workspaceId: "ws-1",
+        path: "ui_page_js/foo.js",
+        enabled: true,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }],
+    });
+    try { await uiPageModule.shutdown(); } catch {}
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService });
+    handler = uiPageModule.getHttpHandler();
+
+    enqueueSpy = mock.fn(() => ({ ok: false, error: "heartbeat_broker_not_available" }));
+    _setBroker({ enqueueToActive: enqueueSpy, waitForResult: mock.fn() });
+
+    const result = await handler(makeReq("POST"), null, ["auto-load-scripts"], { id: "ws-1:ui_page_js/foo.js", run: true });
+    assert.strictEqual(result.error, "dispatch_failed");
+  });
+
+  it("候选运行：POST {workspaceId, path, run:true} 广播 eval_js（_preview），不要求已注册", async () => {
+    await writeWorkspaceFile(dirs.wsDir, "ws-1", "ui_page_js/foo.js", "const a = 1;");
+
+    const result = await handler(makeReq("POST"), null, ["auto-load-scripts"], { workspaceId: "ws-1", path: "ui_page_js/foo.js", run: true });
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.run, true);
+    assert.strictEqual(result.path, "ui_page_js/foo.js");
+    assertCalledWith(enqueueSpy, {
+      type: "eval_js",
+      payload: { script: "const a = 1;", _ws: "ws-1", _preview: true }
+    });
+  });
+
+  it("候选运行：文件缺失 → read_failed，不广播", async () => {
+    const result = await handler(makeReq("POST"), null, ["auto-load-scripts"], { workspaceId: "ws-1", path: "ui_page_js/missing.js", run: true });
+    assert.strictEqual(result.error, "read_failed");
+    assert.strictEqual(enqueueSpy.mock.callCount(), 0);
+  });
+
+  it("候选运行：path 格式非法 → invalid_params，不广播", async () => {
+    const bad = await handler(makeReq("POST"), null, ["auto-load-scripts"], { workspaceId: "ws-1", path: "other.js", run: true });
+    assert.strictEqual(bad.error, "invalid_params");
+    assert.strictEqual(enqueueSpy.mock.callCount(), 0);
+  });
+
+  it("候选运行：心跳通道不可用 → dispatch_failed", async () => {
+    await writeWorkspaceFile(dirs.wsDir, "ws-1", "ui_page_js/foo.js", "x");
+    enqueueSpy = mock.fn(() => ({ ok: false, error: "heartbeat_broker_not_available" }));
+    _setBroker({ enqueueToActive: enqueueSpy, waitForResult: mock.fn(), clearCommand: mock.fn() });
+
+    const result = await handler(makeReq("POST"), null, ["auto-load-scripts"], { workspaceId: "ws-1", path: "ui_page_js/foo.js", run: true });
+    assert.strictEqual(result.error, "dispatch_failed");
+  });
+
+  it("预览广播后延迟 10s 清理心跳消息（clearCommand），防止刷新后重复执行", async () => {
+    await writeWorkspaceFile(dirs.wsDir, "ws-1", "ui_page_js/foo.js", "x");
+    await configService.saveModuleConfig("ui_page", {
+      autoLoadScripts: [{
+        id: "ws-1:ui_page_js/foo.js",
+        name: "foo",
+        workspaceId: "ws-1",
+        path: "ui_page_js/foo.js",
+        enabled: true,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }],
+    });
+    try { await uiPageModule.shutdown(); } catch {}
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService });
+    handler = uiPageModule.getHttpHandler();
+
+    mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      const result = await handler(makeReq("POST"), null, ["auto-load-scripts"], { id: "ws-1:ui_page_js/foo.js", run: true });
+      assert.strictEqual(result.ok, true);
+      // 广播后立即：未清理
+      assert.strictEqual(clearSpy.mock.callCount(), 0);
+      // 10s 后：清理该命令的心跳消息
+      mock.timers.tick(10_000);
+      assert.strictEqual(clearSpy.mock.callCount(), 1);
+      assertCalledWith(clearSpy, "cmd-run");
+    } finally {
+      mock.timers.reset();
+    }
   });
 });

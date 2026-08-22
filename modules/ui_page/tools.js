@@ -9,9 +9,11 @@ export function getToolDefinitions() {
           type: "object",
           properties: {
             script: { type: "string", description: "要执行的 JavaScript 代码，可使用 return 返回结果；可直接访问 window/document" },
+            purpose: { type: "string", description: "本次执行脚本的目的（面向用户展示的简短文字说明，如“在右下角创建股票价格小窗口”）。执行后前端会弹保存提示，此描述会显示在提示框里，帮助用户确认保存的是哪个脚本" },
+            suggestedFilename: { type: "string", description: "建议的保存文件名（不含 .js 后缀）。保存提示框会自动填入该文件名，用户可修改。与 purpose 配合使用" },
             timeoutMs: { type: "number", description: "等待前端回传结果的超时时间（毫秒），默认 100000", default: 100000 }
           },
-          required: ["script"]
+          required: ["script", "purpose", "suggestedFilename"]
         }
       }
     },

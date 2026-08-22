@@ -5,7 +5,9 @@
 - 支持在页面内执行 JavaScript、获取页面内容、对 DOM/CSS 做临时修改；刷新页面后修改自然丢失。
 - **自动加载**：执行 JS 后的保存提示可勾选「自动加载」——脚本只记录工作区路径（不复制文件），
   之后每次页面刷新/加载时按注册顺序自动执行。可在「模块管理 → ui_page」面板中启用/禁用/删除记录
-  （删除仅移除记录，不删除工作区文件）。注册表持久化在 `config/modules/ui_page.json`（autoLoadScripts 键）。
+  （删除仅移除记录，不删除工作区文件），面板支持搜索、添加脚本（列出各工作区 `ui_page_js/` 下
+  未注册的 JS）、以及单条"运行"预览（在主页面上下文执行一次，确认效果，不弹保存提示）。
+  注册表持久化在 `config/modules/ui_page.json`（autoLoadScripts 键）。
 
 文件：
 - index.js：模块入口，定义工具组并通过 runtime.uiCommandBroker 下发指令并等待结果；

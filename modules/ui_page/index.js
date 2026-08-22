@@ -64,9 +64,27 @@ export default {
         if(!args.script){
           return;
         }
+        // 必填参数兜底校验（schema required 已声明，模型不遵守时此处强制）：
+        // 缺失时报错返回给模型，由模型补充参数后重试；否则前端保存提示拿不到目的/建议文件名
+        if (typeof args?.purpose !== "string" || !args.purpose.trim()) {
+          return { error: "invalid_params", message: "ui_page_eval_js 缺少必填参数 purpose（本次执行脚本的目的，面向用户展示的简短说明），请补充后再调用" };
+        }
+        if (typeof args?.suggestedFilename !== "string" || !args.suggestedFilename.trim()) {
+          return { error: "invalid_params", message: "ui_page_eval_js 缺少必填参数 suggestedFilename（建议的保存文件名，不含 .js 后缀），请补充后再调用" };
+        }
         const script = String(args?.script ?? "");
         const wsId = runtime.findWorkspaceIdForAgent(ctx.agent?.id) ?? ctx.agent?.id ?? null;
-        const result = await _dispatchAndWait("eval_js", { script, _ws: wsId }, timeoutMs);
+        // purpose/suggestedFilename 透传给前端保存提示框：展示目的 + 预填建议文件名
+        const result = await _dispatchAndWait(
+          "eval_js",
+          {
+            script,
+            _ws: wsId,
+            purpose: args?.purpose ?? null,
+            suggestedFilename: args?.suggestedFilename ?? null
+          },
+          timeoutMs
+        );
         return result;
       }
       case "ui_page_get_content":
@@ -110,7 +128,9 @@ export default {
    * GET  auto-load-scripts/executables     → { ok, scripts, errors }（前端页面加载时拉取执行）
    * POST auto-load-scripts {id, enabled}   → 启用/禁用，返回全量列表
    * POST auto-load-scripts {id, remove}    → 移除记录（不删文件），返回全量列表
+   * POST auto-load-scripts {id, run}       → 已注册条目运行预览（读内容→心跳广播 eval_js），返回 {ok, path}
    * POST auto-load-scripts {workspaceId, path} → 添加脚本，返回全量列表
+   * POST auto-load-scripts {workspaceId, path, run} → 候选条目运行预览（未注册也可运行），返回 {ok, path}
    */
   getHttpHandler() {
     return async (req, res, pathParts, body) => {
@@ -138,9 +158,30 @@ export default {
         }
 
         if (req.method === "POST" && !action) {
-          const { id, enabled, remove, workspaceId, path: scriptPath } = body ?? {};
+          const { id, enabled, remove, run, workspaceId, path: scriptPath } = body ?? {};
 
           if (typeof id === "string") {
+            // 运行预览：读脚本内容 → 心跳广播 eval_js（_preview 标记，前端不弹保存提示）
+            if (run === true) {
+              const content = await registry.getScriptContent(id);
+              if (!content.ok) {
+                return { error: content.error, message: content.message ?? `未找到记录: ${id}` };
+              }
+              const enq = getBroker().enqueueToActive({
+                type: "eval_js",
+                payload: { script: content.script, _ws: content.entry.workspaceId, _preview: true }
+              });
+              if (!enq.ok) {
+                return { error: "dispatch_failed", message: enq.error };
+              }
+              // 预览命令客户端不回传结果（前端 _preview 跳过 sendResult），消息需由服务端延迟清理，
+              // 防止 60s TTL 内刷新页面被 drain 重复执行
+              setTimeout(() => {
+                const b = getBroker();
+                if (b) b.clearCommand(enq.commandId);
+              }, 10_000).unref?.();
+              return { ok: true, run: true, path: content.entry.path };
+            }
             // 按 id 启停/删除
             if (remove === true) {
               if (!(await registry.remove(id))) {
@@ -149,13 +190,34 @@ export default {
             } else if (typeof enabled === "boolean") {
               await registry.setEnabled(id, enabled);
             } else {
-              return { error: "invalid_params", message: "需提供 enabled 布尔值或 remove: true" };
+              return { error: "invalid_params", message: "需提供 enabled 布尔值、remove: true 或 run: true" };
             }
           } else if (typeof workspaceId === "string" && typeof scriptPath === "string") {
-            // 按 workspaceId+path 添加脚本（面板"添加脚本"入口）
             if (!scriptPath.startsWith("ui_page_js/") || !scriptPath.endsWith(".js")) {
               return { error: "invalid_params", message: "path 需位于 ui_page_js/ 目录且以 .js 结尾" };
             }
+            if (run === true) {
+              // 候选列表运行预览（条目未注册也可运行）：读文件 → 心跳广播 eval_js
+              const content = await registry.getFileContent(workspaceId, scriptPath);
+              if (!content.ok) {
+                return { error: content.error, message: content.message ?? "读取脚本失败" };
+              }
+              const enq = getBroker().enqueueToActive({
+                type: "eval_js",
+                payload: { script: content.script, _ws: workspaceId, _preview: true }
+              });
+              if (!enq.ok) {
+                return { error: "dispatch_failed", message: enq.error };
+              }
+              // 预览命令客户端不回传结果（前端 _preview 跳过 sendResult），消息需由服务端延迟清理，
+              // 防止 60s TTL 内刷新页面被 drain 重复执行
+              setTimeout(() => {
+                const b = getBroker();
+                if (b) b.clearCommand(enq.commandId);
+              }, 10_000).unref?.();
+              return { ok: true, run: true, path: scriptPath };
+            }
+            // 按 workspaceId+path 添加脚本（面板"添加脚本"入口）
             await registry.add({ workspaceId, path: scriptPath });
           } else {
             return { error: "missing_params", message: "需提供 id（启停/删除）或 workspaceId+path（添加）" };
