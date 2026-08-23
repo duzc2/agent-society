@@ -352,10 +352,11 @@ export default {
               await configService.saveModuleConfig('remote', { mappings: current });
               moduleConfig.mappings = current;
               _loadMappings();
-              // 删除映射时关闭远程连接，并清理 localcmd 中该 agent 的运行中进程
-              // （远程进程由 localcmd 统一管理）
+              // 配置变更（新增/修改/删除）都会使旧连接失效：立即关闭，
+              // 智能体下次访问以新账号重连（RemoteManager 缓存层另有配置比对兜底）
+              remoteManager?.closeAgent(agentId);
               if (config === null) {
-                remoteManager?.closeAgent(agentId);
+                // 删除映射还须清理 localcmd 中该 agent 的运行中进程（远程进程由 localcmd 统一管理）
                 const localcmdModule = runtime.moduleLoader?.getModule?.('localcmd');
                 localcmdModule?.killByAgent?.(agentId);
               }

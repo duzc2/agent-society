@@ -397,13 +397,6 @@ function renderMappings() {
   if (!list) return;
 
   const entries = Object.entries(state.mappings);
-
-  if (entries.length === 0) {
-    list.innerHTML = '<div class="empty-text">暂无映射，点击 + 添加</div>';
-    return;
-  }
-
-  const entries = Object.entries(state.mappings);
   const inheritedEntries = Object.entries(state.inherited);
 
   if (entries.length === 0 && inheritedEntries.length === 0) {

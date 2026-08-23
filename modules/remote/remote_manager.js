@@ -24,6 +24,20 @@ class RemoteManager {
   }
 
   /**
+   * 比较两份远程配置是否等价（决定能否复用已有连接）。
+   * 默认值按 _createConnection 的 connectOpts 语义归一（port 22、username root）。
+   */
+  _sameRemoteConfig(a, b) {
+    if (!a || !b) return false;
+    return a.host === b.host
+      && (a.port || 22) === (b.port || 22)
+      && (a.username || 'root') === (b.username || 'root')
+      && (a.password ?? null) === (b.password ?? null)
+      && (a.privateKey ?? null) === (b.privateKey ?? null)
+      && (a.passphrase ?? null) === (b.passphrase ?? null);
+  }
+
+  /**
    * 获取或创建 Agent 的 SSH 连接
    * @param {string} agentId
    * @param {object} remoteConfig - { host, port, username, password, privateKey, passphrase }
@@ -31,12 +45,13 @@ class RemoteManager {
    */
   async getConnection(agentId, remoteConfig) {
     const existing = this._connections.get(agentId);
-    if (existing && existing.connected) {
+    if (existing && existing.connected && this._sameRemoteConfig(existing.config, remoteConfig)) {
       existing.lastUsed = Date.now();
       return existing.client;
     }
 
-    // 如果有旧连接，先清理
+    // 配置已变（设置里改了绑定账号）或连接已断：关闭旧连接用新配置重连。
+    // 旧连接上的运行中远程进程随 channel 关闭而结束（状态经 localcmd 收敛）
     if (existing) {
       try { existing.client.end(); } catch (_) { /* ignore */ }
       this._connections.delete(agentId);
