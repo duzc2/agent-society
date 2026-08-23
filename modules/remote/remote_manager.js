@@ -24,6 +24,45 @@ class RemoteManager {
     /** @type {Map<string, {agentId: string, status: string, exitCode: number, outputFile: string|null, command: string, createdAt: number}>} */
     this._processes = new Map();
     this._processCounter = 0;
+
+    /** @type {Set<Function>} 进程事件监听器（日志/启动/退出事件订阅） */
+    this._processListeners = new Set();
+  }
+
+  /**
+   * 订阅远程进程事件（'log' | 'started' | 'exit'），与本地 ProcessManager 语义一致。
+   * 事件对象: { processId, agentId, pushEvents, type, text?, pid?, status?, exitCode?, signal?, error?, command?, args?, ts }
+   * @param {(evt: object) => void} listener - 事件监听器
+   * @returns {() => void} 取消订阅函数
+   */
+  onProcessEvent(listener) {
+    if (typeof listener === 'function') {
+      this._processListeners.add(listener);
+    }
+    return () => {
+      this._processListeners.delete(listener);
+    };
+  }
+
+  /**
+   * 向所有监听器派发进程事件（逐个捕获异常，不阻断其他监听器）。
+   * @param {object} evt - 事件对象
+   * @private
+   */
+  _emitProcessEvent(evt) {
+    for (const listener of this._processListeners) {
+      try {
+        listener(evt);
+      } catch (err) {
+        this.log.error('[Remote] 进程事件监听器执行失败', {
+          processId: evt?.processId ?? null,
+          type: evt?.type ?? null,
+          error: err?.message ?? String(err),
+          stack: err?.stack,
+          name: err?.name
+        });
+      }
+    }
   }
 
   /**
@@ -1424,9 +1463,10 @@ print('OK')
    * @param {string[]} [args]
    * @param {string} [cwd]
    * @param {object} [env]
+   * @param {boolean} [pushEvents] - 是否向智能体推送进程事件（默认 true）
    * @returns {Promise<{ok: boolean, processId?: string, error?: string}>}
    */
-  async spawnRemoteProcess(agentId, remoteConfig, command, args = [], cwd, env) {
+  async spawnRemoteProcess(agentId, remoteConfig, command, args = [], cwd, env, pushEvents = true) {
     this._processCounter += 1;
     const processId = `remote_${Date.now()}_${this._processCounter}`;
     const shellCmd = this._buildRemoteShellCommand(command, args, cwd, env);
@@ -1474,8 +1514,19 @@ print('OK')
           outputFile,
           writeStream,
           createdAt: new Date().toISOString(),
+          pushEvents,
         };
         this._processes.set(processId, proc);
+        this._emitProcessEvent({
+          processId,
+          agentId,
+          pushEvents,
+          type: 'started',
+          pid: null, // 远程拿不到真实 pid
+          command,
+          args: args || [],
+          ts: Date.now()
+        });
 
         const safeWrite = (data) => {
           if (writeStream.writable && !writeStream.destroyed) {
@@ -1490,10 +1541,14 @@ print('OK')
 
         // stdout / stderr 流式写入
         stream.on('data', (data) => {
-          safeWrite(`[STDOUT] ${data.toString('utf8')}`);
+          const text = `[STDOUT] ${data.toString('utf8')}`;
+          safeWrite(text);
+          this._emitProcessEvent({ processId, agentId, pushEvents, type: 'log', text, ts: Date.now() });
         });
         stream.stderr.on('data', (data) => {
-          safeWrite(`[STDERR] ${data.toString('utf8')}`);
+          const text = `[STDERR] ${data.toString('utf8')}`;
+          safeWrite(text);
+          this._emitProcessEvent({ processId, agentId, pushEvents, type: 'log', text, ts: Date.now() });
         });
 
         // 进程结束
@@ -1512,6 +1567,19 @@ print('OK')
             writeStream.end();
           }
           this.log.info('[Remote] 远程进程结束', { agentId, processId, code, signal });
+          // error 场景（startupError 已设置）由 error handler 发唯一 exit 事件，此处跳过防双发
+          if (!proc.startupError) {
+            this._emitProcessEvent({
+              processId,
+              agentId,
+              pushEvents,
+              type: 'exit',
+              status: proc.status,
+              exitCode: code,
+              signal,
+              ts: Date.now()
+            });
+          }
         });
 
         stream.on('error', (streamErr) => {
@@ -1522,6 +1590,18 @@ print('OK')
             writeStream.end();
           }
           this.log.error('[Remote] 远程进程流错误', { agentId, processId, error: streamErr.message });
+          // 远程启动失败的终端事件（close 因 startupError 守卫跳过，此处是唯一 exit 事件源）
+          this._emitProcessEvent({
+            processId,
+            agentId,
+            pushEvents,
+            type: 'exit',
+            status: 'error',
+            exitCode: null,
+            signal: null,
+            error: streamErr.message,
+            ts: Date.now()
+          });
         });
 
         this.log.info('[Remote] 远程进程已启动', { agentId, processId, command, outputFile });

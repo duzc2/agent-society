@@ -361,17 +361,9 @@
   margin-top: 4px;
 }
 
-/* ===== 映射卡片 ID 行 ===== */
-.mapping-agent-id {
-  font-size: 11px;
-  color: var(--text-3, #777);
-  font-family: 'Consolas', 'Monaco', monospace;
-}
-
-.mapping-agent-id code {
-  background: var(--bg-1, #1a1a2e);
-  padding: 1px 5px;
-  border-radius: 3px;
+/* ===== 映射卡片组织信息行 ===== */
+.mapping-org {
+  font-size: 12px;
   color: var(--text-2, #aaa);
 }
 

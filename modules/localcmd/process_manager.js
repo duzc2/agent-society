@@ -24,6 +24,7 @@ import iconv from "iconv-lite";
  * @property {string} status - 状态: 'running' | 'completed' | 'error' | 'killed'
  * @property {number|null} exitCode - 退出码
  * @property {string|null} startupError - 启动失败时的错误信息，正常启动为 null
+ * @property {boolean} pushEvents - 是否向所属智能体推送进程事件（默认 true）
  * @property {Function} write - 向进程 stdin 写入数据的方法
  * @property {Function} kill - 终止进程的方法
  */
@@ -43,11 +44,50 @@ export class ProcessManager {
     /** @type {Map<string, ManagedProcess>} */
     this._processes = new Map();
 
+    /** @type {Set<Function>} 进程事件监听器（日志/启动/退出事件订阅） */
+    this._processListeners = new Set();
+
     // 确保输出目录存在
     this._ensureOutputDir();
-    
+
     // 监听主进程退出信号
     this._setupProcessCleanup();
+  }
+
+  /**
+   * 订阅进程事件（'log' | 'started' | 'exit'）。
+   * 事件对象: { processId, agentId, pushEvents, type, text?, pid?, status?, exitCode?, signal?, error?, command?, args?, ts }
+   * @param {(evt: object) => void} listener - 事件监听器
+   * @returns {() => void} 取消订阅函数
+   */
+  onProcessEvent(listener) {
+    if (typeof listener === "function") {
+      this._processListeners.add(listener);
+    }
+    return () => {
+      this._processListeners.delete(listener);
+    };
+  }
+
+  /**
+   * 向所有监听器派发进程事件（逐个捕获异常，不阻断其他监听器）。
+   * @param {object} evt - 事件对象
+   * @private
+   */
+  _emitProcessEvent(evt) {
+    for (const listener of this._processListeners) {
+      try {
+        listener(evt);
+      } catch (err) {
+        this.log.error("[ProcessManager] 进程事件监听器执行失败", {
+          processId: evt?.processId ?? null,
+          type: evt?.type ?? null,
+          error: err?.message ?? String(err),
+          stack: err?.stack,
+          name: err?.name
+        });
+      }
+    }
   }
 
   /**
@@ -252,12 +292,12 @@ export class ProcessManager {
    * 启动一个新进程
    * @param {string} command - 要执行的命令
    * @param {string[]} args - 命令参数
-   * @param {{cwd?: string, env?: object, agentId?: string}} options
+   * @param {{cwd?: string, env?: object, agentId?: string, pushEvents?: boolean}} options
    * @returns {Promise<{ok: boolean, processId?: string, error?: string}>}
    */
   async spawn(command, args = [], options = {}) {
     const processId = randomUUID();
-    const { cwd, env, agentId } = options;
+    const { cwd, env, agentId, pushEvents = true } = options;
     const outputFile = this._generateOutputFilePath(processId);
 
     this.log.info("[ProcessManager] 启动进程", { processId, command, args, cwd, outputFile });
@@ -294,6 +334,7 @@ export class ProcessManager {
         status: "running",
         exitCode: null,
         startupError: null,
+        pushEvents,
         write: (data) => {
           if (childProcess.stdin && !childProcess.stdin.destroyed) {
             childProcess.stdin.write(data);
@@ -317,12 +358,16 @@ export class ProcessManager {
 
       // 处理 stdout（从系统编码解码为 UTF-8）
       childProcess.stdout?.on("data", (data) => {
-        safeWrite(`[STDOUT] ${this._decodeBuffer(data)}`);
+        const text = `[STDOUT] ${this._decodeBuffer(data)}`;
+        safeWrite(text);
+        this._emitProcessEvent({ processId, agentId, pushEvents, type: "log", text, ts: Date.now() });
       });
 
       // 处理 stderr（从系统编码解码为 UTF-8）
       childProcess.stderr?.on("data", (data) => {
-        safeWrite(`[STDERR] ${this._decodeBuffer(data)}`);
+        const text = `[STDERR] ${this._decodeBuffer(data)}`;
+        safeWrite(text);
+        this._emitProcessEvent({ processId, agentId, pushEvents, type: "log", text, ts: Date.now() });
       });
 
       // 进程结束
@@ -364,6 +409,16 @@ export class ProcessManager {
         }
 
         this.log.info("[ProcessManager] 进程结束", { processId, code, signal });
+        this._emitProcessEvent({
+          processId,
+          agentId,
+          pushEvents,
+          type: "exit",
+          status: managedProcess.status,
+          exitCode: code,
+          signal,
+          ts: Date.now()
+        });
       });
 
       childProcess.on("error", (err) => {
@@ -376,11 +431,33 @@ export class ProcessManager {
         }
 
         this.log.error("[ProcessManager] 进程错误", { processId, error: err?.message });
+        // 启动失败的终端事件（close 事件在 startupError 早退分支被跳过，此处是唯一 exit 事件源）
+        this._emitProcessEvent({
+          processId,
+          agentId,
+          pushEvents,
+          type: "exit",
+          status: "error",
+          exitCode: null,
+          signal: null,
+          error: err.message,
+          ts: Date.now()
+        });
       });
 
       // 非阻塞 spawn 事件监听（仅日志）
       childProcess.once("spawn", () => {
         this.log.info("[ProcessManager] 进程启动成功", { processId, pid: childProcess.pid, outputFile });
+        this._emitProcessEvent({
+          processId,
+          agentId,
+          pushEvents,
+          type: "started",
+          pid: childProcess.pid ?? null,
+          command,
+          args,
+          ts: Date.now()
+        });
       });
 
       // 注册到生命周期注册表

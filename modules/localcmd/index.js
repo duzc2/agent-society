@@ -10,6 +10,7 @@ import { ProcessManager } from "./process_manager.js";
 import { getToolDefinitions } from "./tools.js";
 import { checkPolicy } from "./policy_engine.js";
 import { PolicyStore } from "./policy_store.js";
+import { ProcessEventPusher } from "../../src/platform/services/process_events/event_pusher.js";
 import { getWorkspaceManager } from "../../src/platform/services/workspace/workspace_manager.js";
 
 /** @type {ProcessManager|null} */
@@ -17,6 +18,9 @@ let processManager = null;
 
 /** @type {PolicyStore|null} */
 let policyStore = null;
+
+/** @type {ProcessEventPusher|null} */
+let processEventPusher = null;
 
 /** @type {any} */
 let runtime = null;
@@ -59,6 +63,17 @@ export default {
       runtime,
       dataDir
     });
+
+    // 初始化进程事件推送器：进程状态变化与日志更新主动推送给所属智能体
+    processEventPusher = new ProcessEventPusher({
+      runtime,
+      log,
+      intervalMs: 30000
+    });
+    processManager.onProcessEvent((evt) => {
+      processEventPusher.onEvent(evt);
+    });
+    log.info("[LocalCmd] 进程事件推送器已就绪", { intervalMs: 30000 });
 
     // 初始化策略存储
     policyStore = new PolicyStore(dataDir, log);
@@ -112,7 +127,7 @@ export default {
             return await processManager.spawn(
               args.command,
               args.args ?? [],
-              { cwd: resolvedCwd, env: args.env, agentId }
+              { cwd: resolvedCwd, env: args.env, agentId, pushEvents: args.pushEvents !== false }
             );
           }
 
@@ -141,7 +156,7 @@ export default {
               return await processManager.spawn(
                 args.command,
                 args.args ?? [],
-                { cwd: resolvedCwd, env: args.env, agentId }
+                { cwd: resolvedCwd, env: args.env, agentId, pushEvents: args.pushEvents !== false }
               );
             }
 
@@ -184,7 +199,7 @@ export default {
                 return await processManager.spawn(
                   args.command,
                   args.args ?? [],
-                  { cwd: resolvedCwd, env: args.env, agentId }
+                  { cwd: resolvedCwd, env: args.env, agentId, pushEvents: args.pushEvents !== false }
                 );
               } else {
                 return {
@@ -430,6 +445,12 @@ export default {
       pending.reject(new Error("module_shutdown"));
     }
     pendingConfirmations.clear();
+
+    // 先推送剩余批次，再终止子进程（killAll 触发的 close 事件在推送器关闭后被忽略）
+    if (processEventPusher) {
+      processEventPusher.shutdown();
+      processEventPusher = null;
+    }
 
     if (processManager) {
       await processManager.killAll();

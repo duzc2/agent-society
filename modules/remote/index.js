@@ -16,6 +16,7 @@
 import RemoteManager from './remote_manager.js';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
+import { ProcessEventPusher } from '../../src/platform/services/process_events/event_pusher.js';
 import { getWorkspaceManager } from '../../src/platform/services/workspace/workspace_manager.js';
 
 /** @type {any} 运行时实例 */
@@ -26,6 +27,9 @@ let log = null;
 
 /** @type {RemoteManager} */
 let remoteManager = null;
+
+/** @type {ProcessEventPusher|null} 远程进程事件推送器 */
+let processEventPusher = null;
 
 /** @type {object} 模块配置 */
 let moduleConfig = {};
@@ -222,6 +226,37 @@ async function _copyAcrossBoundary(ctx, mgr, agentId, remoteConfig, sourcePath, 
 /**
  * 加载 Agent 映射配置
  */
+/**
+ * 解析 Agent 的组织归属上下文（与 web/v3 heartbeatService.resolveAgentContext 语义一致）：
+ * 沿 parentAgentId 链向上找第一个设置了 orgName 的节点，该节点即组织管理者；
+ * 若 Agent 自己设置了组织名则管理者即它自己。
+ * @param {object} org - OrgPrimitives 实例
+ * @param {string} agentId
+ * @returns {{orgName: string|null, orgManagerName: string|null}}
+ */
+function resolveOrgContext(org, agentId) {
+  let node = org.getAgent(agentId);
+  const seen = new Set([agentId]);
+  while (node && !org.getOrgName(node.id)) {
+    const parentId = node.parentAgentId;
+    if (!parentId || seen.has(parentId)) {
+      node = null;
+      break;
+    }
+    seen.add(parentId);
+    node = org.getAgent(parentId);
+  }
+  if (!node) {
+    // 组织名称必有值；走到这里说明组织数据链路异常，如实暴露
+    return { orgName: null, orgManagerName: null };
+  }
+  const role = node.roleId ? org.getRole(node.roleId) : null;
+  return {
+    orgName: org.getOrgName(node.id) ?? null,
+    orgManagerName: node.name || role?.name || node.roleId || null,
+  };
+}
+
 function _loadMappings() {
   agentMappings.clear();
   const mappings = moduleConfig.mappings || {};
@@ -282,7 +317,7 @@ export default {
                 remoteManager?.closeAgent(agentId);
                 remoteManager?.cleanupAgentProcesses(agentId);
               }
-              return { ok: true, message: '映射已保存' };
+              return { ok: true, mappings: current, message: '映射已保存' };
             }
             return { error: 'config_service_unavailable' };
           }
@@ -321,14 +356,28 @@ export default {
 
         if (resource === 'agents') {
           // 返回所有 Agent 列表（供配置界面选择）
+          // 数据源用 org（与主界面 buildOrgTree / localcmd GET /policies 一致），
+          // 提供显示名、岗位名、组织名称与组织管理者名称
           try {
             const agents = [];
-            if (runtime._agents && runtime._agents instanceof Map) {
-              for (const [id, agent] of runtime._agents) {
+            const org = runtime.org;
+            if (org && typeof org.listAgents === 'function') {
+              const roles = new Map(
+                (typeof org.listRoles === 'function' ? org.listRoles() : []).map((r) => [r.id, r])
+              );
+              for (const agent of org.listAgents()) {
+                if (!agent || !agent.id) continue;
+                const role = agent.roleId ? roles.get(agent.roleId) : null;
+                const roleName = role?.name ?? agent.roleId ?? '';
+                const orgCtx = resolveOrgContext(org, String(agent.id));
                 agents.push({
-                  id: String(agent.id || id),
-                  name: String(agent.name || agent.roleName || id),
-                  roleName: String(agent.roleName || ''),
+                  id: String(agent.id),
+                  // 显示名：自定义名优先，其次岗位名
+                  name: String(agent.name || roleName || agent.id),
+                  customName: agent.name ?? null,
+                  roleName: String(roleName),
+                  orgName: orgCtx.orgName,
+                  orgManagerName: orgCtx.orgManagerName,
                 });
               }
             }
@@ -365,6 +414,17 @@ export default {
     // 初始化 RemoteManager
     remoteManager = new RemoteManager(log, runtime.dataDir);
 
+    // 初始化进程事件推送器：远程进程状态变化与日志更新主动推送给所属智能体
+    processEventPusher = new ProcessEventPusher({
+      runtime,
+      log,
+      intervalMs: 30000
+    });
+    remoteManager.onProcessEvent((evt) => {
+      processEventPusher.onEvent(evt);
+    });
+    log.info('[Remote] 进程事件推送器已就绪', { intervalMs: 30000 });
+
     // 加载映射
     _loadMappings();
 
@@ -393,6 +453,12 @@ export default {
    */
   async shutdown() {
     log?.info('[Remote] 模块开始关闭');
+
+    // 先推送剩余批次，再关闭连接（连接关闭触发的 close 事件在推送器关闭后被忽略）
+    if (processEventPusher) {
+      processEventPusher.shutdown();
+      processEventPusher = null;
+    }
 
     if (remoteManager) {
       await remoteManager.closeAll();
@@ -787,7 +853,8 @@ async function _handleRemoteToolCall(ctx, toolName, args, remoteConfig, agentId)
           command,
           args?.args || [],
           args?.cwd,
-          args?.env
+          args?.env,
+          args?.pushEvents !== false
         );
       }
 

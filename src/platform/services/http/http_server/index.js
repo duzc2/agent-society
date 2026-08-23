@@ -333,6 +333,12 @@ export class HTTPServer {
       await next();
     });
 
+    // 模块面板静态文件不缓存：改前端代码后浏览器刷新即可生效，避免旧版本残留
+    this._app.use('/modules/*', async (c, next) => {
+      await next();
+      c.res.headers.set('Cache-Control', 'no-cache');
+    });
+
     // 静态文件路由
     // @hono/node-server serveStatic 不会自动去除路由前缀，必须用 rewriteRequestPath 矫正路径
     this._app.get('/*', serveStatic({ root: './'}));

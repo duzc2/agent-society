@@ -353,6 +353,9 @@ async function loadAgents() {
     if (data.ok) {
       state.agents = data.agents || [];
       filterAgents();
+      // agents 就绪后重渲染映射列表：loadMappings 可能先完成，
+      // 此时 agents 未加载会导致卡片回退显示 agentId（渲染竞态）
+      renderMappings();
       // 若表单可见且未选择，刷新列表
       const form = document.getElementById('mapping-form');
       if (form && form.style.display !== 'none' && !state.editingAgentId) {
@@ -400,7 +403,10 @@ function renderMappings() {
 
   list.innerHTML = entries.map(([agentId, config]) => {
     const agent = state.agents.find(a => String(a.id) === String(agentId));
-    const agentLabel = agent ? (agent.name || agent.roleName || agentId) : agentId;
+    // 智能体名称（后端已拼好显示名：自定义名优先，其次岗位名；映射过期时回退 ID）
+    const agentName = agent ? (agent.name || agentId) : agentId;
+    // 组织名称-组织管理者名称（组织名称必有值；若为 null 说明组织数据链路异常，直接暴露）
+    const orgLine = agent ? `${agent.orgName}-${agent.orgManagerName || agent.name || agentId}` : agentName;
     const enabled = config.enabled !== false;
     const serverInfo = `${config.username || '?'}@${config.host || '?'}:${config.port || 22}`;
 
@@ -408,10 +414,10 @@ function renderMappings() {
       <div class="mapping-card${enabled ? '' : ' disabled'}">
         <div class="mapping-info">
           <div class="mapping-agent">
-            🤖 ${escapeHtml(agentLabel)}
+            🤖 ${escapeHtml(agentName)}
             <span class="badge ${enabled ? 'enabled' : 'disabled'}">${enabled ? '启用' : '禁用'}</span>
           </div>
-          <div class="mapping-agent-id">ID: <code>${escapeHtml(String(agentId))}</code></div>
+          <div class="mapping-org">🏢 ${escapeHtml(orgLine)}</div>
           <div class="mapping-server">🖧 ${escapeHtml(serverInfo)}</div>
         </div>
         <div class="mapping-actions">
@@ -554,7 +560,6 @@ async function deleteMapping(agentId) {
     }
 
     state.mappings = data.mappings || {};
-    delete state.mappings[agentId];
     renderMappings();
     filterAgents();
     showResult('success', '映射已删除');
@@ -608,10 +613,8 @@ async function saveMapping() {
     }
 
     state.mappings = data.mappings || {};
-    if (!data.mappings) {
-      state.mappings[agentId] = config;
-    }
     renderMappings();
+    filterAgents();
     hideAddForm();
     showResult('success', '映射已保存（立即生效）');
   } catch (err) {

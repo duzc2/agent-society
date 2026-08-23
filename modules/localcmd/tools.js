@@ -27,8 +27,12 @@ export function getToolDefinitions() {
         description: [
           "启动一个新的本地进程（fire-and-forget）。调用后立即返回，不等待进程任何事件。",
           "进程可以长期运行，不会自动超时。所有输出会写入独立的日志文件。",
-          "必须使用 localcmd_get_status 查看进程是否开始运行以及当前状态。",
-          "必须使用 localcmd_read_output 读取进程输出。",
+          "【主动推送（默认开启）】进程状态变化与日志更新会自动推送给智能体，无需轮询：",
+          "1. 推送按真实发生顺序批量到达（最小间隔 30 秒），每条推送标注事件发生的真实时间；",
+          "2. 进程退出时立即推送日志与结束事件，不等 30 秒；",
+          "3. 日志过多时只推送最新 150 行且不超过 2KB 的内容，消息中会告知被跳过的行范围——",
+          "   如需完整内容，可调用 localcmd_read_output 按提示查询（offset=0/window=5000，或读末尾 offset=totalLength-window）。",
+          "4. 设置 pushEvents=false 可关闭推送（关闭后行为与旧版一致：仅靠 localcmd_get_status / localcmd_read_output 查询）。",
           "command 和 args 必须分开传递，例如 command='node', args=['-e', 'console.log(1)']。"
         ].join(" "),
         parameters: {
@@ -51,6 +55,11 @@ export function getToolDefinitions() {
             env: {
               type: "object",
               description: "额外的环境变量，会合并到系统环境变量中"
+            },
+            pushEvents: {
+              type: "boolean",
+              description: "是否主动推送进程事件给智能体（默认 true）。进程状态变化与日志更新会主动推送（30 秒批量、退出立即推送、最多 150 行且 2KB）；设 false 关闭推送，仅保留原有查询接口。",
+              default: true
             },
             intent: {
               type: "string",
