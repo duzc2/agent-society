@@ -269,6 +269,34 @@ export default {
   },
 
   /**
+   * 启动由外部"进程样对象"驱动的受管进程（remote 模块把 SSH 远程进程桥接为
+   * 本地进程的统一入口）。与本地进程共享完全一致的生命周期：日志文件、
+   * 自适应解码、live 状态、历史查询、终止语义。
+   * @param {string} command - 要执行的命令
+   * @param {string[]} [args] - 命令参数
+   * @param {{agentId?: string, pushEvents?: boolean, childProcess: object}} options
+   * @returns {Promise<{ok: boolean, processId?: string, error?: string}>}
+   */
+  async spawnExternalProcess(command, args, options) {
+    if (!processManager) {
+      return { ok: false, error: "localcmd_not_initialized" };
+    }
+    return processManager.spawnExternalProcess(command, args, options);
+  },
+
+  /**
+   * 终止指定 agent 的全部运行中进程（remote 删除映射时清理该 agent 的远程进程用）
+   * @param {string} agentId - 智能体 ID
+   * @returns {{ok: boolean, killed: number}}
+   */
+  killByAgent(agentId) {
+    if (!processManager) {
+      return { ok: false, killed: 0, error: "localcmd_not_initialized" };
+    }
+    return processManager.killByAgent(agentId);
+  },
+
+  /**
    * 获取 HTTP API 路由处理器
    * @returns {Function}
    */

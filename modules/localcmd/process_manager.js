@@ -394,7 +394,7 @@ export class ProcessManager {
   }
 
   /**
-   * 启动一个新进程
+   * 启动一个新进程（本地 child_process）
    * @param {string} command - 要执行的命令
    * @param {string[]} args - 命令参数
    * @param {{cwd?: string, env?: object, agentId?: string, pushEvents?: boolean}} options
@@ -419,244 +419,330 @@ export class ProcessManager {
         stdio: ["pipe", "pipe", "pipe"] // stdin, stdout, stderr 都使用管道
       });
 
-      // 创建输出文件写入流（追加模式）
-      const writeStream = fs.createWriteStream(outputFile, {
-        flags: "a",
-        encoding: "utf8"
-      });
+      return await this._startManagedProcess(command, args, { processId, outputFile, agentId, pushEvents, childProcess });
+    } catch (err) {
+      return await this._handleStartFailure(err, processId, outputFile, command);
+    }
+  }
 
-      // 添加文件头标记
-      writeStream.write(`[PROCESS_START] ${command} ${args.join(" ")}\n`);
-      writeStream.write(`[START_TIME] ${new Date().toISOString()}\n`);
-      if (agentId) {
-        writeStream.write(`[AGENT_ID] ${agentId}\n`);
+  /**
+   * 启动一个由外部"进程样对象"驱动的受管进程。
+   *
+   * remote 模块把 SSH 远程进程包装成"进程样对象"后交给本方法，从而与本地进程
+   * 共享完全一致的生命周期：日志文件、自适应解码、live 状态、历史查询、终止语义。
+   *
+   * "进程样对象"契约（本地 child_process 与远程 adapter 共同满足）：
+   * - stdout / stderr：发出 'data'（Buffer chunk）的 EventEmitter，可空
+   * - stdin：{ write(data), destroyed }，可空
+   * - kill(signal)：终止进程，幂等（关闭后调用不抛错）
+   * - on('close', (code, signal)) / on('error', (err)) / once('spawn', cb) 事件
+   * - pid：number 或 null
+   *
+   * @param {string} command - 要执行的命令
+   * @param {string[]} [args] - 命令参数
+   * @param {{agentId?: string, pushEvents?: boolean, childProcess: object}} options
+   * @returns {Promise<{ok: boolean, processId?: string, error?: string}>}
+   */
+  async spawnExternalProcess(command, args = [], options = {}) {
+    const { agentId, pushEvents = true, childProcess } = options;
+    // 功能组件禁止空值兼容：childProcess 缺失是调用方 bug，直接暴露
+    if (!childProcess || typeof childProcess.on !== "function" || typeof childProcess.kill !== "function") {
+      throw new Error("[ProcessManager] spawnExternalProcess 缺少合法的 childProcess");
+    }
+
+    const processId = randomUUID();
+    const outputFile = this._generateOutputFilePath(processId, agentId);
+
+    this.log.info("[ProcessManager] 启动外部进程", { processId, command, args, outputFile, agentId });
+
+    try {
+      await this._ensureOutputDir(agentId);
+      return await this._startManagedProcess(command, args, { processId, outputFile, agentId, pushEvents, childProcess });
+    } catch (err) {
+      return await this._handleStartFailure(err, processId, outputFile, command);
+    }
+  }
+
+  /**
+   * 受管进程生命周期主体：日志文件写入 + 自适应解码 + live Map + 事件推送 + 生命周期注册。
+   * 本地 spawn 与外部进程（remote 桥接）共用同一实现。
+   * @param {string} command
+   * @param {string[]} args
+   * @param {{processId: string, outputFile: string, agentId?: string, pushEvents: boolean, childProcess: object}} options
+   * @returns {{ok: boolean, processId: string}}
+   * @private
+   */
+  async _startManagedProcess(command, args, { processId, outputFile, agentId, pushEvents, childProcess }) {
+    // 同步确保日志文件已创建：createWriteStream 的 open 是异步的，
+    // 刚 spawn 后立即 readOutput / 历史读取会碰到 ENOENT 竞态
+    fs.closeSync(fs.openSync(outputFile, "a"));
+
+    // 创建输出文件写入流（追加模式）
+    const writeStream = fs.createWriteStream(outputFile, {
+      flags: "a",
+      encoding: "utf8"
+    });
+
+    // 添加文件头标记
+    writeStream.write(`[PROCESS_START] ${command} ${args.join(" ")}\n`);
+    writeStream.write(`[START_TIME] ${new Date().toISOString()}\n`);
+    if (agentId) {
+      writeStream.write(`[AGENT_ID] ${agentId}\n`);
+    }
+    writeStream.write("-".repeat(50) + "\n");
+
+    // 自适应流式解码器：按内容自动判定 UTF-8/GBK（不依赖本地代码页设置），
+    // 同时处理跨 chunk 的多字节字符边界
+    const stdoutDecoder = new AdaptiveStreamDecoder(this.log);
+    const stderrDecoder = new AdaptiveStreamDecoder(this.log);
+
+    const managedProcess = {
+      id: processId,
+      agentId,
+      process: childProcess,
+      command,
+      args,
+      outputFile,
+      writeStream,
+      createdAt: new Date().toISOString(),
+      status: "running",
+      exitCode: null,
+      startupError: null,
+      pushEvents,
+      write: (data) => {
+        if (childProcess.stdin && !childProcess.stdin.destroyed) {
+          childProcess.stdin.write(data);
+          return { ok: true };
+        }
+        return { ok: false, error: "stdin_closed" };
+      },
+      kill: (signal = "SIGTERM") => {
+        return this._killProcess(processId, signal);
       }
-      writeStream.write("-".repeat(50) + "\n");
+    };
 
-      // 自适应流式解码器：按内容自动判定 UTF-8/GBK（不依赖本地代码页设置），
-      // 同时处理跨 chunk 的多字节字符边界
-      const stdoutDecoder = new AdaptiveStreamDecoder(this.log);
-      const stderrDecoder = new AdaptiveStreamDecoder(this.log);
+    this._processes.set(processId, managedProcess);
 
-      const managedProcess = {
-        id: processId,
+    // 安全写入函数：检查流是否可写
+    const safeWrite = (data) => {
+      if (writeStream.writable && !writeStream.destroyed) {
+        writeStream.write(data);
+      }
+    };
+
+    // 处理 stdout（自适应解码：跨 chunk 边界 + GBK 回退）
+    childProcess.stdout?.on("data", (data) => {
+      const decoded = stdoutDecoder.write(data);
+      const text = `[STDOUT] ${decoded}`;
+      safeWrite(text);
+      this._emitProcessEvent({ processId, agentId, pushEvents, type: "log", text, ts: Date.now() });
+    });
+
+    // 处理 stderr（自适应解码：跨 chunk 边界 + GBK 回退）
+    childProcess.stderr?.on("data", (data) => {
+      const decoded = stderrDecoder.write(data);
+      const text = `[STDERR] ${decoded}`;
+      safeWrite(text);
+      this._emitProcessEvent({ processId, agentId, pushEvents, type: "log", text, ts: Date.now() });
+    });
+
+    // 进程结束
+    childProcess.on("close", (code, signal) => {
+      // 如果启动已失败，清理已在 catch 块中处理，跳过
+      if (managedProcess.startupError) {
+        return;
+      }
+      // 如果进程是被主动 kill 的（_killProcess 已置 status="killed"），保持 killed，
+      // 否则 close 时按退出码覆盖会导致 killed 被误标为 error
+      if (managedProcess.status !== "killed") {
+        managedProcess.status = code === 0 ? "completed" : "error";
+      }
+      managedProcess.exitCode = code;
+
+      // 冲刷解码器中跨 chunk 残留的字节（UTF-8 残尾 / GBK 前导字节）
+      const outRemaining = stdoutDecoder.end();
+      if (outRemaining) {
+        safeWrite(`[STDOUT] ${outRemaining}`);
+      }
+      const errRemaining = stderrDecoder.end();
+      if (errRemaining) {
+        safeWrite(`[STDERR] ${errRemaining}`);
+      }
+
+      safeWrite("-".repeat(50) + "\n");
+      safeWrite(`[PROCESS_END] exitCode=${code}, signal=${signal}\n`);
+      safeWrite(`[END_TIME] ${new Date().toISOString()}\n`);
+
+      if (writeStream.writable && !writeStream.destroyed) {
+        writeStream.end();
+      }
+
+      // 延迟 30 分钟后从 Map 中移除，给调用方足够的时间读取输出
+      const cleanupTimer = setTimeout(async () => {
+        this._processes.delete(processId);
+        // 从生命周期注册表注销
+        if (managedProcess.agentId) {
+          try {
+            await this.runtime.lifecycleRegistry.unregister(`subprocess:${processId}`);
+          } catch (e) {
+            this.log.debug("[ProcessManager] 子进程生命周期注销，正常", { processId });
+          }
+        }
+        this.log.info("[ProcessManager] 进程条目已清理", { processId, code });
+      }, 1800000);
+      if (cleanupTimer && typeof cleanupTimer.unref === "function") {
+        cleanupTimer.unref();
+      }
+
+      this.log.info("[ProcessManager] 进程结束", { processId, code, signal });
+      this._emitProcessEvent({
+        processId,
         agentId,
-        process: childProcess,
+        pushEvents,
+        type: "exit",
+        status: managedProcess.status,
+        exitCode: code,
+        signal,
+        ts: Date.now()
+      });
+    });
+
+    childProcess.on("error", (err) => {
+      managedProcess.status = "error";
+      managedProcess.startupError = err.message;
+      safeWrite(`[PROCESS_ERROR] ${err.message}\n`);
+
+      if (writeStream.writable && !writeStream.destroyed) {
+        writeStream.end();
+      }
+
+      this.log.error("[ProcessManager] 进程错误", { processId, error: err?.message });
+      // 启动失败的终端事件（close 事件在 startupError 早退分支被跳过，此处是唯一 exit 事件源）
+      this._emitProcessEvent({
+        processId,
+        agentId,
+        pushEvents,
+        type: "exit",
+        status: "error",
+        exitCode: null,
+        signal: null,
+        error: err.message,
+        ts: Date.now()
+      });
+    });
+
+    // 非阻塞 spawn 事件监听（仅日志）
+    childProcess.once("spawn", () => {
+      this.log.info("[ProcessManager] 进程启动成功", { processId, pid: childProcess.pid, outputFile });
+      this._emitProcessEvent({
+        processId,
+        agentId,
+        pushEvents,
+        type: "started",
+        pid: childProcess.pid ?? null,
         command,
         args,
-        outputFile,
-        writeStream,
-        createdAt: new Date().toISOString(),
-        status: "running",
-        exitCode: null,
-        startupError: null,
-        pushEvents,
-        write: (data) => {
-          if (childProcess.stdin && !childProcess.stdin.destroyed) {
-            childProcess.stdin.write(data);
-            return { ok: true };
-          }
-          return { ok: false, error: "stdin_closed" };
-        },
-        kill: (signal = "SIGTERM") => {
-          return this._killProcess(processId, signal);
-        }
-      };
-
-      this._processes.set(processId, managedProcess);
-
-      // 安全写入函数：检查流是否可写
-      const safeWrite = (data) => {
-        if (writeStream.writable && !writeStream.destroyed) {
-          writeStream.write(data);
-        }
-      };
-
-      // 处理 stdout（自适应解码：跨 chunk 边界 + GBK 回退）
-      childProcess.stdout?.on("data", (data) => {
-        const decoded = stdoutDecoder.write(data);
-        const text = `[STDOUT] ${decoded}`;
-        safeWrite(text);
-        this._emitProcessEvent({ processId, agentId, pushEvents, type: "log", text, ts: Date.now() });
+        ts: Date.now()
       });
+    });
 
-      // 处理 stderr（自适应解码：跨 chunk 边界 + GBK 回退）
-      childProcess.stderr?.on("data", (data) => {
-        const decoded = stderrDecoder.write(data);
-        const text = `[STDERR] ${decoded}`;
-        safeWrite(text);
-        this._emitProcessEvent({ processId, agentId, pushEvents, type: "log", text, ts: Date.now() });
-      });
-
-      // 进程结束
-      childProcess.on("close", (code, signal) => {
-        // 如果启动已失败，清理已在 catch 块中处理，跳过
-        if (managedProcess.startupError) {
-          return;
-        }
-        // 如果进程是被主动 kill 的（_killProcess 已置 status="killed"），保持 killed，
-        // 否则 close 时按退出码覆盖会导致 killed 被误标为 error
-        if (managedProcess.status !== "killed") {
-          managedProcess.status = code === 0 ? "completed" : "error";
-        }
-        managedProcess.exitCode = code;
-
-        // 冲刷解码器中跨 chunk 残留的字节（UTF-8 残尾 / GBK 前导字节）
-        const outRemaining = stdoutDecoder.end();
-        if (outRemaining) {
-          safeWrite(`[STDOUT] ${outRemaining}`);
-        }
-        const errRemaining = stderrDecoder.end();
-        if (errRemaining) {
-          safeWrite(`[STDERR] ${errRemaining}`);
-        }
-
-        safeWrite("-".repeat(50) + "\n");
-        safeWrite(`[PROCESS_END] exitCode=${code}, signal=${signal}\n`);
-        safeWrite(`[END_TIME] ${new Date().toISOString()}\n`);
-
-        if (writeStream.writable && !writeStream.destroyed) {
-          writeStream.end();
-        }
-
-        // 延迟 30 分钟后从 Map 中移除，给调用方足够的时间读取输出
-        const cleanupTimer = setTimeout(async () => {
-          this._processes.delete(processId);
-          // 从生命周期注册表注销
-          if (managedProcess.agentId) {
-            try {
-              await this.runtime.lifecycleRegistry.unregister(`subprocess:${processId}`);
-            } catch (e) {
-              this.log.debug("[ProcessManager] 子进程生命周期注销，正常", { processId });
-            }
-          }
-          this.log.info("[ProcessManager] 进程条目已清理", { processId, code });
-        }, 1800000);
-        if (cleanupTimer && typeof cleanupTimer.unref === "function") {
-          cleanupTimer.unref();
-        }
-
-        this.log.info("[ProcessManager] 进程结束", { processId, code, signal });
-        this._emitProcessEvent({
-          processId,
-          agentId,
-          pushEvents,
-          type: "exit",
-          status: managedProcess.status,
-          exitCode: code,
-          signal,
-          ts: Date.now()
-        });
-      });
-
-      childProcess.on("error", (err) => {
-        managedProcess.status = "error";
-        managedProcess.startupError = err.message;
-        safeWrite(`[PROCESS_ERROR] ${err.message}\n`);
-
-        if (writeStream.writable && !writeStream.destroyed) {
-          writeStream.end();
-        }
-
-        this.log.error("[ProcessManager] 进程错误", { processId, error: err?.message });
-        // 启动失败的终端事件（close 事件在 startupError 早退分支被跳过，此处是唯一 exit 事件源）
-        this._emitProcessEvent({
-          processId,
-          agentId,
-          pushEvents,
-          type: "exit",
-          status: "error",
-          exitCode: null,
-          signal: null,
-          error: err.message,
-          ts: Date.now()
-        });
-      });
-
-      // 非阻塞 spawn 事件监听（仅日志）
-      childProcess.once("spawn", () => {
-        this.log.info("[ProcessManager] 进程启动成功", { processId, pid: childProcess.pid, outputFile });
-        this._emitProcessEvent({
-          processId,
-          agentId,
-          pushEvents,
-          type: "started",
-          pid: childProcess.pid ?? null,
-          command,
-          args,
-          ts: Date.now()
-        });
-      });
-
-      // 注册到生命周期注册表
-      if (agentId) {
-        const resourceId = `subprocess:${processId}`;
-        try {
-          this.runtime.lifecycleRegistry.register({
-            id: resourceId,
-            type: 'subprocess',
-            ownerAgentId: agentId,
-            cleanup: () => {
-              managedProcess.status = "killed";
-              childProcess.kill("SIGKILL");
-            }
-          });
-        } catch (e) {
-          this.log.warn("[ProcessManager] 子进程生命周期注册失败", { processId, agentId, error: e?.message });
-        }
-      }
-
-      return {
-        ok: true,
-        processId,
-      };
-    } catch (err) {
-      const message = err?.message ?? String(err);
-      this.log.error("[ProcessManager] 启动进程失败", { processId, command, error: message });
-
-      // 如果进程条目已注册到 Map，标记启动失败并清理
-      const mp = this._processes.get(processId);
-      if (mp) {
-        mp.startupError = message;
-        // 关闭写入流
-        if (mp.writeStream && mp.writeStream.writable && !mp.writeStream.destroyed) {
-          mp.writeStream.end();
-        }
-        // 尝试终止子进程
-        try {
-          mp.process?.kill?.("SIGKILL");
-        } catch {
-          // 忽略 kill 错误
-        }
-        // 延迟 30 分钟后从 Map 中移除，给调用方足够的时间查询状态和错误信息
-        const cleanupTimer = setTimeout(async () => {
-          this._processes.delete(processId);
-          if (mp.agentId) {
-            try {
-              await this.runtime.lifecycleRegistry.unregister(`subprocess:${processId}`);
-            } catch (e) {
-              this.log.debug("[ProcessManager] 启动失败进程生命周期注销", { processId });
-            }
-          }
-          this.log.info("[ProcessManager] 启动失败进程条目已清理", { processId });
-        }, 1800000);
-        if (cleanupTimer && typeof cleanupTimer.unref === "function") {
-          cleanupTimer.unref();
-        }
-      }
-
-      // 清理可能创建的文件
+    // 注册到生命周期注册表
+    if (agentId) {
+      const resourceId = `subprocess:${processId}`;
       try {
-        await fsp.unlink(outputFile);
+        this.runtime.lifecycleRegistry.register({
+          id: resourceId,
+          type: 'subprocess',
+          ownerAgentId: agentId,
+          cleanup: () => {
+            managedProcess.status = "killed";
+            childProcess.kill("SIGKILL");
+          }
+        });
       } catch (e) {
-        // 忽略清理错误
+        this.log.warn("[ProcessManager] 子进程生命周期注册失败", { processId, agentId, error: e?.message });
       }
-      return {
-        ok: false,
-        processId,
-        error: message
-      };
     }
+
+    return {
+      ok: true,
+      processId,
+    };
+  }
+
+  /**
+   * 启动失败的统一处理：标记条目、关闭写入流、尝试终止进程、清理文件。
+   * 本地 spawn 与外部进程（remote 桥接）共用。
+   * @param {Error} err
+   * @param {string} processId
+   * @param {string} outputFile
+   * @param {string} command
+   * @returns {Promise<{ok: boolean, processId: string, error: string}>}
+   * @private
+   */
+  async _handleStartFailure(err, processId, outputFile, command) {
+    const message = err?.message ?? String(err);
+    this.log.error("[ProcessManager] 启动进程失败", { processId, command, error: message });
+
+    // 如果进程条目已注册到 Map，标记启动失败并清理
+    const mp = this._processes.get(processId);
+    if (mp) {
+      mp.startupError = message;
+      // 关闭写入流
+      if (mp.writeStream && mp.writeStream.writable && !mp.writeStream.destroyed) {
+        mp.writeStream.end();
+      }
+      // 尝试终止子进程
+      try {
+        mp.process?.kill?.("SIGKILL");
+      } catch {
+        // 忽略 kill 错误
+      }
+      // 延迟 30 分钟后从 Map 中移除，给调用方足够的时间查询状态和错误信息
+      const cleanupTimer = setTimeout(async () => {
+        this._processes.delete(processId);
+        if (mp.agentId) {
+          try {
+            await this.runtime.lifecycleRegistry.unregister(`subprocess:${processId}`);
+          } catch (e) {
+            this.log.debug("[ProcessManager] 启动失败进程生命周期注销", { processId });
+          }
+        }
+        this.log.info("[ProcessManager] 启动失败进程条目已清理", { processId });
+      }, 1800000);
+      if (cleanupTimer && typeof cleanupTimer.unref === "function") {
+        cleanupTimer.unref();
+      }
+    }
+
+    // 清理可能创建的文件
+    try {
+      await fsp.unlink(outputFile);
+    } catch (e) {
+      // 忽略清理错误
+    }
+    return {
+      ok: false,
+      processId,
+      error: message
+    };
+  }
+
+  /**
+   * 终止指定 agent 的全部运行中进程（remote 删除映射时清理该 agent 的远程进程用）
+   * @param {string} agentId - 智能体 ID
+   * @returns {{ok: boolean, killed: number}}
+   */
+  killByAgent(agentId) {
+    let killed = 0;
+    for (const [processId, managedProcess] of this._processes) {
+      if (managedProcess.agentId === agentId && managedProcess.status === "running") {
+        this._killProcess(processId, "SIGTERM");
+        killed++;
+      }
+    }
+    this.log.info("[ProcessManager] 已按 agent 终止进程", { agentId, killed });
+    return { ok: true, killed };
   }
 
   /**
@@ -745,11 +831,20 @@ export class ProcessManager {
         
         // 从指定偏移位置读取
         const { bytesRead } = await fileHandle.read(buffer, 0, bytesToRead, offset);
-        
-        // 转换为字符串
-        const content = buffer.toString("utf8", 0, bytesRead);
-        
-        const nextOffset = offset + bytesRead;
+
+        // UTF-8 边界保护：读窗口尾部可能落在多字节字符中间。
+        // 残尾且后面还有内容时，残尾字节回退到下一窗口（nextOffset 前移），
+        // 保证每个窗口解码的都是完整序列；文件末尾则按原长消费（截断产出 U+FFFD）
+        let consumeLen = bytesRead;
+        const incompleteIdx = _incompleteUtf8Index(buffer.subarray(0, bytesRead));
+        if (incompleteIdx !== -1 && offset + bytesRead < totalLength) {
+          consumeLen = incompleteIdx;
+        }
+        if (consumeLen === 0) consumeLen = bytesRead; // 兜底：保证偏移单调前进
+
+        const content = buffer.toString("utf8", 0, consumeLen);
+
+        const nextOffset = offset + consumeLen;
         const hasMore = nextOffset < totalLength;
 
         await fileHandle.close();
@@ -875,8 +970,9 @@ export class ProcessManager {
       if (command && startedAt) break;
     }
 
-    // 尾部解析
-    const endMatch = tail.match(/\[PROCESS_END\] exitCode=(-?\d+|null), signal=(\S*)\]/);
+    // 尾部解析。注意：写入格式为 "[PROCESS_END] exitCode=0, signal=null"（无结尾方括号），
+    // 信号值以空白为界；原正则要求尾括号导致磁盘解析恒为 interrupted
+    const endMatch = tail.match(/\[PROCESS_END\] exitCode=(-?\d+|null), signal=(\S*)/);
     const endTimeMatch = tail.match(/\[END_TIME\] (.+)/);
     const endedAt = endTimeMatch ? endTimeMatch[1].trim() : null;
     let status = "interrupted"; // 无 END 标记 → 中断（进程被强杀/主进程崩溃）
@@ -985,43 +1081,58 @@ export class ProcessManager {
 
     const { offset = 0, window = this.defaultWindowSize } = options;
 
-    // 查缓存（需要先被 _scanHistoryCache 加载过）
+    // 查缓存（需要先被 _scanHistoryCache 加载过）。缓存未命中时回退到 live 进程的
+    // 输出文件：新进程的文件可能刚创建尚未冲刷/被扫描（UI 点击刚出现的运行中命令）
     const entry = this._historyCache.get(processId);
-    if (!entry || !entry.filePath) {
+    let filePath = entry?.filePath ?? null;
+    if (!filePath) {
+      const liveFallback = this._processes.get(processId);
+      filePath = liveFallback?.outputFile ?? null;
+    }
+    if (!filePath) {
       return { ok: false, error: "process_not_found" };
     }
 
     let stat;
-    try { stat = await fsp.stat(entry.filePath); } catch {
+    try { stat = await fsp.stat(filePath); } catch {
       return { ok: false, error: "file_not_found" };
     }
 
+    const live = this._processes.get(processId);
+
     if (offset >= stat.size) {
-      const live = this._processes.get(processId);
       return {
         ok: true, content: "", offset, nextOffset: stat.size, totalLength: stat.size,
         hasMore: false,
-        status: live ? live.status : entry.status,
-        exitCode: live ? live.exitCode : entry.exitCode
+        status: live ? live.status : (entry ? entry.status : null),
+        exitCode: live ? live.exitCode : (entry ? entry.exitCode : null)
       };
     }
 
     const bytesToRead = Math.min(window, stat.size - offset);
     let fh;
     try {
-      fh = await fsp.open(entry.filePath, "r");
+      fh = await fsp.open(filePath, "r");
       const buf = Buffer.alloc(bytesToRead);
       const { bytesRead } = await fh.read(buf, 0, bytesToRead, offset);
-      // 直接 UTF-8 解码（写路径已用 StringDecoder 保证文件是完整 UTF-8）
-      const content = buf.toString("utf8", 0, bytesRead);
-      const nextOffset = offset + bytesRead;
-      const live = this._processes.get(processId);
+
+      // UTF-8 边界保护：读窗口尾部可能落在多字节字符中间（与 readOutput 同法）
+      let consumeLen = bytesRead;
+      const incompleteIdx = _incompleteUtf8Index(buf.subarray(0, bytesRead));
+      if (incompleteIdx !== -1 && offset + bytesRead < stat.size) {
+        consumeLen = incompleteIdx;
+      }
+      if (consumeLen === 0) consumeLen = bytesRead; // 兜底：保证偏移单调前进
+
+      // 写路径已用自适应解码器保证文件是完整 UTF-8
+      const content = buf.toString("utf8", 0, consumeLen);
+      const nextOffset = offset + consumeLen;
 
       return {
         ok: true, content, offset, nextOffset, totalLength: stat.size,
         hasMore: nextOffset < stat.size,
-        status: live ? live.status : entry.status,
-        exitCode: live ? live.exitCode : entry.exitCode
+        status: live ? live.status : (entry ? entry.status : null),
+        exitCode: live ? live.exitCode : (entry ? entry.exitCode : null)
       };
     } catch (err) {
       return { ok: false, error: `read_failed: ${err?.message}` };
@@ -1137,8 +1248,8 @@ export class ProcessManager {
       // 先尝试优雅终止
       managedProcess.process.kill(signal);
       
-      // Windows 特殊处理
-      if (process.platform === "win32") {
+      // Windows 特殊处理（远程桥接进程 pid 为 null，跳过 taskkill）
+      if (process.platform === "win32" && managedProcess.process.pid != null) {
         try {
           spawn("taskkill", ["/pid", managedProcess.process.pid.toString(), "/t", "/f"]);
         } catch (e) {

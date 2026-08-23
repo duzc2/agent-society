@@ -16,7 +16,6 @@
 import RemoteManager from './remote_manager.js';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
-import { ProcessEventPusher } from '../../src/platform/services/process_events/event_pusher.js';
 import { getWorkspaceManager } from '../../src/platform/services/workspace/workspace_manager.js';
 
 /** @type {any} 运行时实例 */
@@ -27,9 +26,6 @@ let log = null;
 
 /** @type {RemoteManager} */
 let remoteManager = null;
-
-/** @type {ProcessEventPusher|null} 远程进程事件推送器 */
-let processEventPusher = null;
 
 /** @type {object} 模块配置 */
 let moduleConfig = {};
@@ -69,13 +65,10 @@ const INTERCEPTED_TOOLS = new Set([
   'file_check_permission',
   'file_list_authorized_folders',
   'append_file',
-  // localcmd 系列：本地命令执行工具，remote 模式下桥接到远程
+  // localcmd 系列：仅 localcmd_spawn 需要桥接（选择 SSH 传输并注册进 localcmd）。
+  // 其余 localcmd 工具（send_input/read_output/get_status/list/kill）随进程进入
+  // localcmd 的 ProcessManager 后走原有本地代码路径，不再拦截
   'localcmd_spawn',
-  'localcmd_send_input',
-  'localcmd_read_output',
-  'localcmd_get_status',
-  'localcmd_list',
-  'localcmd_kill',
 ]);
 
 /**
@@ -359,10 +352,12 @@ export default {
               await configService.saveModuleConfig('remote', { mappings: current });
               moduleConfig.mappings = current;
               _loadMappings();
-              // 删除映射时清理远程连接和进程
+              // 删除映射时关闭远程连接，并清理 localcmd 中该 agent 的运行中进程
+              // （远程进程由 localcmd 统一管理）
               if (config === null) {
                 remoteManager?.closeAgent(agentId);
-                remoteManager?.cleanupAgentProcesses(agentId);
+                const localcmdModule = runtime.moduleLoader?.getModule?.('localcmd');
+                localcmdModule?.killByAgent?.(agentId);
               }
               return { ok: true, mappings: current, inherited: _buildInheritedMappings(), message: '映射已保存' };
             }
@@ -458,19 +453,9 @@ export default {
 
     log.info('[Remote] 模块初始化开始');
 
-    // 初始化 RemoteManager
+    // 初始化 RemoteManager（仅 SSH 通信：连接、一次性命令、sftp。
+    // 远程进程的生命周期由 localcmd 统一管理，remote 只做桥接）
     remoteManager = new RemoteManager(log, runtime.dataDir);
-
-    // 初始化进程事件推送器：远程进程状态变化与日志更新主动推送给所属智能体
-    processEventPusher = new ProcessEventPusher({
-      runtime,
-      log,
-      intervalMs: 30000
-    });
-    remoteManager.onProcessEvent((evt) => {
-      processEventPusher.onEvent(evt);
-    });
-    log.info('[Remote] 进程事件推送器已就绪', { intervalMs: 30000 });
 
     // 加载映射
     _loadMappings();
@@ -500,12 +485,6 @@ export default {
    */
   async shutdown() {
     log?.info('[Remote] 模块开始关闭');
-
-    // 先推送剩余批次，再关闭连接（连接关闭触发的 close 事件在推送器关闭后被忽略）
-    if (processEventPusher) {
-      processEventPusher.shutdown();
-      processEventPusher = null;
-    }
 
     if (remoteManager) {
       await remoteManager.closeAll();
@@ -890,54 +869,42 @@ async function _handleRemoteToolCall(ctx, toolName, args, remoteConfig, agentId)
         return { ok: true, folders: [] };
       }
 
-      // ========== localcmd 系列：桥接到远程执行（语义完全等价） ==========
+      // ========== localcmd 系列：localcmd_spawn 桥接（进程生命周期由 localcmd 统一管理） ==========
       case 'localcmd_spawn': {
         const command = args?.command;
         if (!command) return { ok: false, error: 'missing_command' };
-        return await mgr.spawnRemoteProcess(
-          agentId,
-          remoteConfig,
+
+        // remote 只负责通信：打开 SSH channel 并包装成"进程样对象"，
+        // 交给 localcmd 的 ProcessManager 管理（日志、解码、live 状态、历史、终止）。
+        // 其余 localcmd 工具不再被拦截，随进程进入 localcmd 后走原有本地代码路径。
+        const localcmdModule = runtime.moduleLoader?.getModule?.('localcmd');
+        if (!localcmdModule || typeof localcmdModule.spawnExternalProcess !== 'function') {
+          return { ok: false, error: 'localcmd_unavailable', message: 'localcmd 模块未加载，无法管理远程进程' };
+        }
+
+        const shellCmd = mgr.buildRemoteShellCommand(
           command,
           args?.args || [],
           args?.cwd,
-          args?.env,
-          args?.pushEvents !== false
+          args?.env
         );
-      }
+        let client;
+        try {
+          client = await mgr.getConnection(agentId, remoteConfig);
+        } catch (err) {
+          return { ok: false, error: 'ssh_connection_failed', message: err.message };
+        }
 
-      case 'localcmd_send_input': {
-        const processId = args?.processId;
-        const input = args?.input;
-        if (!processId) return { ok: false, error: 'missing_process_id' };
-        if (typeof input !== 'string') return { ok: false, error: 'missing_input' };
-        return await mgr.sendRemoteProcessInput(agentId, processId, input);
-      }
+        const adapter = await _execRemoteChannel(client, shellCmd);
+        if (!adapter.ok) {
+          return { ok: false, error: adapter.error, message: adapter.message };
+        }
 
-      case 'localcmd_read_output': {
-        const processId = args?.processId;
-        if (!processId) return { ok: false, error: 'missing_process_id' };
-        return await mgr.readRemoteProcessOutput(
+        return await localcmdModule.spawnExternalProcess(command, args?.args || [], {
           agentId,
-          processId,
-          args?.offset || 0,
-          args?.window || 5000
-        );
-      }
-
-      case 'localcmd_get_status': {
-        const processId = args?.processId;
-        if (!processId) return { ok: false, error: 'missing_process_id' };
-        return await mgr.getRemoteProcessStatus(agentId, processId);
-      }
-
-      case 'localcmd_list': {
-        return await mgr.listRemoteProcesses(agentId);
-      }
-
-      case 'localcmd_kill': {
-        const processId = args?.processId;
-        if (!processId) return { ok: false, error: 'missing_process_id' };
-        return await mgr.killRemoteProcess(agentId, processId);
+          pushEvents: args?.pushEvents !== false,
+          childProcess: adapter.processLike
+        });
       }
 
       default:
@@ -952,4 +919,67 @@ async function _handleRemoteToolCall(ctx, toolName, args, remoteConfig, agentId)
     });
     return { error: 'remote_tool_error', toolName, message: err.message };
   }
+}
+
+/**
+ * 打开 SSH exec channel 并包装成 localcmd 认识的"进程样对象"。
+ *
+ * 契约（与 localcmd ProcessManager.spawnExternalProcess 的 childProcess 参数一致）：
+ * - stdout / stderr：发出 'data'（Buffer）的 EventEmitter
+ * - stdin：{ write(data), destroyed }
+ * - kill(signal)：终止（幂等，关闭后调用不抛错）
+ * - on('close',(code,signal)) / on('error',(err)) / once('spawn',cb) 事件
+ * - pid：null（远程拿不到真实 pid）
+ *
+ * @param {import('ssh2').Client} client
+ * @param {string} shellCmd
+ * @returns {Promise<{ok: boolean, processLike?: object, error?: string, message?: string}>}
+ * @private
+ */
+function _execRemoteChannel(client, shellCmd) {
+  return new Promise((resolve) => {
+    client.exec(shellCmd, (err, stream) => {
+      if (err) {
+        log?.error('[Remote] 远程进程 exec 失败', { shellCmd, error: err.message });
+        resolve({ ok: false, error: 'exec_failed', message: err.message });
+        return;
+      }
+
+      let closed = false;
+      stream.on('close', () => { closed = true; });
+
+      const processLike = {
+        pid: null,
+        // ssh2 stream 本身就是 stdout（'data' 事件天然兼容）
+        stdout: stream,
+        stderr: stream.stderr,
+        stdin: {
+          write: (data) => {
+            if (!closed) {
+              stream.write(data);
+              return true;
+            }
+            return false;
+          },
+          // getter 跟随 close 状态：channel 关闭后 localcmd 的 write 返回 stdin_closed
+          get destroyed() { return closed; }
+        },
+        kill: (signal = 'SIGTERM') => {
+          // 等价保留原 killRemoteProcess 语义：先发信号（部分服务端不支持则忽略），再关闭 channel
+          try { stream.signal(signal); } catch (_) { /* ignore */ }
+          try { stream.close(); } catch (_) { /* ignore */ }
+        },
+        on: (evt, cb) => stream.on(evt, cb),
+        once: (evt, cb) => {
+          // ssh2 无 'spawn' 事件：立即回调，保证 localcmd 的 started 推送时机与远程一致
+          if (evt === 'spawn') {
+            cb();
+            return;
+          }
+          stream.once(evt, cb);
+        },
+      };
+      resolve({ ok: true, processLike });
+    });
+  });
 }
