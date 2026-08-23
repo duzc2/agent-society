@@ -391,6 +391,43 @@ export default {
           return { error: "method_not_allowed", method: req.method };
         }
 
+        // ---- 历史命令查询 API ----
+        if (resource === "history") {
+          const url = new URL(req.url, "http://localhost");
+          const toInt = (v, d) => { const x = parseInt(v, 10); return Number.isFinite(x) && x >= 0 ? x : d; };
+
+          // GET /api/modules/localcmd/history?agentId=xxx&offset=0&limit=50&search=
+          if (req.method === "GET" && !id) {
+            const agentId = url.searchParams.get("agentId");
+            if (!agentId) {
+              return { error: "missing_agentId" };
+            }
+            const limit = Math.min(toInt(url.searchParams.get("limit"), 50), 200);
+            const offset = toInt(url.searchParams.get("offset"), 0);
+            const search = url.searchParams.get("search") ?? "";
+            const { items, total } = await processManager.listHistory(agentId, { offset, limit, search });
+            return { ok: true, items, total, offset, limit };
+          }
+
+          // GET /api/modules/localcmd/history/:processId/output?offset=0&window=65536
+          if (req.method === "GET" && id && action === "output") {
+            const window = Math.min(toInt(url.searchParams.get("window"), 65536), 1024 * 1024);
+            const offset = toInt(url.searchParams.get("offset"), 0);
+            return await processManager.readOutputByFile(id, { offset, window });
+          }
+
+          // DELETE /api/modules/localcmd/history?agentId=xxx
+          if (req.method === "DELETE" && !id) {
+            const agentId = url.searchParams.get("agentId");
+            if (!agentId) {
+              return { error: "missing_agentId" };
+            }
+            return await processManager.deleteHistoryByAgent(agentId);
+          }
+
+          return { error: "method_not_allowed", method: req.method, resource };
+        }
+
         // ---- 原有进程查询 API ----
         if (resource === "processes") {
           if (req.method === "GET" && !id) {

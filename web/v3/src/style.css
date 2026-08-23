@@ -235,6 +235,10 @@
   padding: 1.25rem !important;
 }
 
+.agent-commands-dialog .p-dialog-content {
+  padding: 1.25rem !important;
+}
+
 .p-dialog-footer {
   background: var(--surface-1) !important;
   border-top: 1px solid var(--border) !important;

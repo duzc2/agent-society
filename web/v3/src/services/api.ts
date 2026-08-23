@@ -7,6 +7,29 @@ export interface AutoReplyConfig {
   delaySeconds: number;
 }
 
+export interface CommandHistoryItem {
+  processId: string;
+  command: string;
+  agentId?: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  durationMs: number | null;
+  status: 'running' | 'completed' | 'error' | 'killed' | 'interrupted';
+  exitCode: number | null;
+  size: number;
+}
+
+export interface CommandOutputChunk {
+  ok: boolean;
+  content: string;
+  offset: number;
+  nextOffset: number;
+  totalLength: number;
+  hasMore: boolean;
+  status: string;
+  exitCode: number | null;
+}
+
 /**
  * API 调用服务
  * 封装与后端服务器的 HTTP 请求，将后端数据结构映射到前端领域模型
@@ -692,6 +715,29 @@ export const apiService = {
       method: 'POST',
       body: JSON.stringify({ orgName })
     });
+  },
+
+  // ---- 历史命令 ----
+
+  async getCommandHistory(agentId: string, params: { offset?: number; limit?: number; search?: string } = {}): Promise<{ items: CommandHistoryItem[]; total: number }> {
+    const q = [`agentId=${encodeURIComponent(agentId)}`];
+    if (params.offset != null) q.push(`offset=${params.offset}`);
+    if (params.limit != null) q.push(`limit=${params.limit}`);
+    if (params.search) q.push(`search=${encodeURIComponent(params.search)}`);
+    const data = await request<{ items: CommandHistoryItem[]; total: number }>(`/modules/localcmd/history?${q.join('&')}`);
+    return { items: data.items || [], total: data.total ?? 0 };
+  },
+
+  async getCommandOutput(processId: string, params: { offset?: number; window?: number } = {}): Promise<CommandOutputChunk> {
+    const q = [];
+    if (params.offset != null) q.push(`offset=${params.offset}`);
+    if (params.window != null) q.push(`window=${params.window}`);
+    const qs = q.length ? `?${q.join('&')}` : '';
+    return request<CommandOutputChunk>(`/modules/localcmd/history/${encodeURIComponent(processId)}/output${qs}`);
+  },
+
+  async clearCommandHistory(agentId: string): Promise<{ ok: boolean; deletedCount: number; skippedCount: number }> {
+    return request(`/modules/localcmd/history?agentId=${encodeURIComponent(agentId)}`, { method: 'DELETE' });
   },
 
 

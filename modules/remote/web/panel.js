@@ -16,6 +16,7 @@ const CONFIG = {
 
 const state = {
   mappings: {},
+  inherited: {},   // 继承的绑定:agentId -> {sourceAgentId, config}
   agents: [],
   editingAgentId: null,
   // ---- Agent 选择器状态 ----
@@ -379,6 +380,7 @@ async function loadMappings() {
     const data = await response.json();
     if (data.ok) {
       state.mappings = data.mappings || {};
+      state.inherited = data.inherited || {};
       renderMappings();
     }
   } catch (err) {
@@ -401,7 +403,16 @@ function renderMappings() {
     return;
   }
 
-  list.innerHTML = entries.map(([agentId, config]) => {
+  const entries = Object.entries(state.mappings);
+  const inheritedEntries = Object.entries(state.inherited);
+
+  if (entries.length === 0 && inheritedEntries.length === 0) {
+    list.innerHTML = '<div class="empty-text">暂无映射，点击 + 添加</div>';
+    return;
+  }
+
+  // 显式配置的映射卡片（可编辑/删除）
+  const explicitCards = entries.map(([agentId, config]) => {
     const agent = state.agents.find(a => String(a.id) === String(agentId));
     // 智能体名称（后端已拼好显示名：自定义名优先，其次岗位名；映射过期时回退 ID）
     const agentName = agent ? (agent.name || agentId) : agentId;
@@ -426,7 +437,34 @@ function renderMappings() {
         </div>
       </div>
     `;
-  }).join('');
+  });
+
+  // 继承的映射卡片（跟随父级绑定，不可直接编辑/删除）
+  const inheritedCards = inheritedEntries.map(([agentId, info]) => {
+    const agent = state.agents.find(a => String(a.id) === String(agentId));
+    const agentName = agent ? (agent.name || agentId) : agentId;
+    const orgLine = agent ? `${agent.orgName}-${agent.orgManagerName || agent.name || agentId}` : agentName;
+    const source = state.agents.find(a => String(a.id) === String(info.sourceAgentId));
+    const sourceName = source ? (source.name || info.sourceAgentId) : info.sourceAgentId;
+    const enabled = info.config?.enabled !== false;
+    const serverInfo = `${info.config?.username || '?'}@${info.config?.host || '?'}:${info.config?.port || 22}`;
+
+    return `
+      <div class="mapping-card inherited${enabled ? '' : ' disabled'}">
+        <div class="mapping-info">
+          <div class="mapping-agent">
+            🤖 ${escapeHtml(agentName)}
+            <span class="badge inherited">继承</span>
+          </div>
+          <div class="mapping-org">🏢 ${escapeHtml(orgLine)}</div>
+          <div class="mapping-server">🖧 ${escapeHtml(serverInfo)}</div>
+          <div class="mapping-inherited-from">⬇ 继承自 ${escapeHtml(sourceName)}</div>
+        </div>
+      </div>
+    `;
+  });
+
+  list.innerHTML = explicitCards.concat(inheritedCards).join('');
 }
 
 // ============================================================
@@ -560,6 +598,7 @@ async function deleteMapping(agentId) {
     }
 
     state.mappings = data.mappings || {};
+    state.inherited = data.inherited || {};
     renderMappings();
     filterAgents();
     showResult('success', '映射已删除');
@@ -613,6 +652,7 @@ async function saveMapping() {
     }
 
     state.mappings = data.mappings || {};
+    state.inherited = data.inherited || {};
     renderMappings();
     filterAgents();
     hideAddForm();

@@ -130,6 +130,72 @@ describe("Remote /mappings HTTP API", () => {
     const result = await handler(makeReq("POST"), null, ["mappings"], { agentId: "agent-1", config: CONF_A });
     assert.strictEqual(result.error, "config_service_unavailable");
   });
+
+  it("子智能体继承父级绑定 → GET 返回 inherited 包含子 agent", async () => {
+    mockOrg._state.agents.set("parent-1", { id: "parent-1", roleId: "role-p", parentAgentId: "root", status: "active", name: "张梓" });
+    mockOrg._state.agents.set("child-1", { id: "child-1", roleId: "role-c", parentAgentId: "parent-1", status: "active", name: "NPU验证员" });
+    await handler(makeReq("POST"), null, ["mappings"], { agentId: "parent-1", config: CONF_A });
+
+    const result = await handler(makeReq(), null, ["mappings"]);
+    assert.strictEqual(result.ok, true);
+    assert.deepStrictEqual(result.inherited["child-1"], { sourceAgentId: "parent-1", config: CONF_A });
+  });
+
+  it("多层继承 → 沿父链找到根级绑定", async () => {
+    mockOrg._state.agents.set("grand-1", { id: "grand-1", roleId: "role-g", parentAgentId: "root", status: "active", name: "祖父" });
+    mockOrg._state.agents.set("parent-1", { id: "parent-1", roleId: "role-p", parentAgentId: "grand-1", status: "active", name: "父" });
+    mockOrg._state.agents.set("child-1", { id: "child-1", roleId: "role-c", parentAgentId: "parent-1", status: "active", name: "子" });
+    await handler(makeReq("POST"), null, ["mappings"], { agentId: "grand-1", config: CONF_A });
+
+    const result = await handler(makeReq(), null, ["mappings"]);
+    assert.deepStrictEqual(result.inherited["child-1"], { sourceAgentId: "grand-1", config: CONF_A });
+  });
+
+  it("自己显式绑定的 agent 不出现在 inherited", async () => {
+    mockOrg._state.agents.set("parent-1", { id: "parent-1", roleId: "role-p", parentAgentId: "root", status: "active", name: "张梓" });
+    mockOrg._state.agents.set("child-1", { id: "child-1", roleId: "role-c", parentAgentId: "parent-1", status: "active", name: "NPU验证员" });
+    await handler(makeReq("POST"), null, ["mappings"], { agentId: "parent-1", config: CONF_A });
+    await handler(makeReq("POST"), null, ["mappings"], { agentId: "child-1", config: CONF_B });
+
+    const result = await handler(makeReq(), null, ["mappings"]);
+    assert.strictEqual(result.mappings["child-1"], CONF_B);
+    assert.ok(!("child-1" in result.inherited), "显式绑定的子级不应出现在 inherited");
+  });
+
+  it("删除父级映射 → 子级继承消失", async () => {
+    mockOrg._state.agents.set("parent-1", { id: "parent-1", roleId: "role-p", parentAgentId: "root", status: "active", name: "张梓" });
+    mockOrg._state.agents.set("child-1", { id: "child-1", roleId: "role-c", parentAgentId: "parent-1", status: "active", name: "NPU验证员" });
+    await handler(makeReq("POST"), null, ["mappings"], { agentId: "parent-1", config: CONF_A });
+    await handler(makeReq("POST"), null, ["mappings"], { agentId: "parent-1", config: null });
+
+    const result = await handler(makeReq(), null, ["mappings"]);
+    assert.ok(!("child-1" in result.inherited), "父级解绑后子级继承应消失");
+  });
+
+  it("父级启用状态变更 → 子级继承跟随（禁用不继承）", async () => {
+    mockOrg._state.agents.set("parent-1", { id: "parent-1", roleId: "role-p", parentAgentId: "root", status: "active", name: "张梓" });
+    mockOrg._state.agents.set("child-1", { id: "child-1", roleId: "role-c", parentAgentId: "parent-1", status: "active", name: "NPU验证员" });
+    await handler(makeReq("POST"), null, ["mappings"], { agentId: "parent-1", config: CONF_A });
+
+    // 禁用父级
+    await handler(makeReq("POST"), null, ["mappings"], { agentId: "parent-1", config: { ...CONF_A, enabled: false } });
+    const disabled = await handler(makeReq(), null, ["mappings"]);
+    assert.ok(!("child-1" in disabled.inherited), "父级禁用后子级不应继承");
+
+    // 重新启用
+    await handler(makeReq("POST"), null, ["mappings"], { agentId: "parent-1", config: { ...CONF_A, enabled: true } });
+    const enabled = await handler(makeReq(), null, ["mappings"]);
+    assert.deepStrictEqual(enabled.inherited["child-1"], { sourceAgentId: "parent-1", config: { ...CONF_A, enabled: true } });
+  });
+
+  it("POST 保存响应含 inherited（父级保存后子级立即继承）", async () => {
+    mockOrg._state.agents.set("parent-1", { id: "parent-1", roleId: "role-p", parentAgentId: "root", status: "active", name: "张梓" });
+    mockOrg._state.agents.set("child-1", { id: "child-1", roleId: "role-c", parentAgentId: "parent-1", status: "active", name: "NPU验证员" });
+
+    const result = await handler(makeReq("POST"), null, ["mappings"], { agentId: "parent-1", config: CONF_A });
+    assert.strictEqual(result.ok, true);
+    assert.deepStrictEqual(result.inherited["child-1"], { sourceAgentId: "parent-1", config: CONF_A });
+  });
 });
 
 describe("Remote /agents HTTP API", () => {

@@ -367,6 +367,24 @@
   color: var(--text-2, #aaa);
 }
 
+/* ===== 继承的映射卡片 ===== */
+.mapping-card.inherited {
+  border-style: dashed;
+  opacity: 0.9;
+}
+
+.mapping-card .badge.inherited {
+  background: var(--bg-2, #2a2a4a);
+  color: var(--accent, #4fc3f7);
+  border: 1px solid var(--accent, #4fc3f7);
+}
+
+.mapping-inherited-from {
+  font-size: 11px;
+  color: var(--text-3, #777);
+  margin-top: 2px;
+}
+
 /* ===== 下拉滚动条 ===== */
 .agent-picker-dropdown::-webkit-scrollbar {
   width: 6px;

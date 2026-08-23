@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Send, Bot, Sparkles, ArrowDown, User, Search, MoreVertical, Loader2, X, Trash2, FileText, CheckSquare, Eraser, SlidersHorizontal, Lightbulb, Download, Repeat } from 'lucide-vue-next';
+import { Send, Bot, Sparkles, ArrowDown, User, Search, MoreVertical, Loader2, X, Trash2, FileText, CheckSquare, Eraser, SlidersHorizontal, Lightbulb, Download, Repeat, History } from 'lucide-vue-next';
 import MoodGrid from '../common/MoodGrid.vue';
 import Button from 'primevue/button';
 import Textarea from 'primevue/textarea';
@@ -18,6 +18,7 @@ import { useDialog } from 'primevue/usedialog';
 import { openAgentPropertiesWindow } from '../agent/agentPropertiesWindow';
 import { useChatExport } from './useChatExport';
 import { openAgentFilesDialog, refreshAgentFiles } from './agentFilesDialog';
+import { openAgentCommandsDialog } from './agentCommandsDialog';
 import { isMoodDark } from '../../utils/moodColors';
 
 
@@ -195,6 +196,17 @@ const moreMenuItems = computed(() => [
       const agent = activeAgent.value;
       if (agent && agent.id !== 'user') {
         openAgentFilesDialog(dialog, props.orgId, agent.id, agent.name);
+      }
+    },
+    disabled: !activeAgent.value || activeAgent.value.id === 'user'
+  },
+  {
+    label: '历史命令',
+    icon: 'history',
+    command: () => {
+      const agent = activeAgent.value;
+      if (agent && agent.id !== 'user') {
+        openAgentCommandsDialog(dialog, agent.id, agent.name);
       }
     },
     disabled: !activeAgent.value || activeAgent.value.id === 'user'
@@ -929,6 +941,7 @@ const handleClearHistory = async () => {
           <template #item="{ item }">
             <div class="flex items-center px-3 py-2" :class="{ 'opacity-50 cursor-not-allowed': item.disabled }">
               <FileText v-if="item.icon === 'files'" class="w-4 h-4 mr-2 text-[var(--text-1)]" />
+              <History v-if="item.icon === 'history'" class="w-4 h-4 mr-2 text-[var(--text-1)]" />
               <CheckSquare v-if="item.icon === 'check-square'" class="w-4 h-4 mr-2 text-[var(--text-1)]" />
               <SlidersHorizontal v-if="item.icon === 'sliders-horizontal'" class="w-4 h-4 mr-2 text-[var(--text-1)]" />
               <Eraser v-if="item.icon === 'eraser'" class="w-4 h-4 mr-2 text-red-500" />

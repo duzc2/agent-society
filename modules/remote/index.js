@@ -257,6 +257,53 @@ function resolveOrgContext(org, agentId) {
   };
 }
 
+/**
+ * 解析 Agent 的远程绑定：
+ * 自己显式绑定优先；未绑定时沿 parentAgentId 链向上找第一个有绑定的祖先（继承绑定关系）。
+ * 运行时解析、不复制配置——父级解绑/改绑后子级自动跟随。
+ * @param {string} agentId
+ * @returns {{config: object, sourceAgentId: string}|null} 无绑定（含链路无绑定）返回 null
+ */
+function _resolveAgentMapping(agentId) {
+  const own = agentMappings.get(String(agentId));
+  if (own) return { config: own, sourceAgentId: String(agentId) };
+
+  const org = runtime?.org;
+  if (!org || typeof org.getAgent !== 'function') return null;
+
+  const seen = new Set([String(agentId)]);
+  let node = org.getAgent(String(agentId));
+  while (node) {
+    const parentId = node.parentAgentId;
+    if (!parentId || seen.has(parentId)) break;
+    seen.add(parentId);
+    const inherited = agentMappings.get(String(parentId));
+    if (inherited) return { config: inherited, sourceAgentId: String(parentId) };
+    node = org.getAgent(String(parentId));
+  }
+  return null;
+}
+
+/**
+ * 构建继承映射表：所有未显式绑定但沿链可继承绑定的 Agent。
+ * @returns {Object<string, {sourceAgentId: string, config: object}>}
+ */
+function _buildInheritedMappings() {
+  const inherited = {};
+  const org = runtime?.org;
+  if (!org || typeof org.listAgents !== 'function') return inherited;
+
+  for (const agent of org.listAgents()) {
+    if (!agent || !agent.id) continue;
+    if (agentMappings.has(String(agent.id))) continue; // 显式绑定的不参与继承
+    const mapping = _resolveAgentMapping(String(agent.id));
+    if (mapping) {
+      inherited[String(agent.id)] = { sourceAgentId: mapping.sourceAgentId, config: mapping.config };
+    }
+  }
+  return inherited;
+}
+
 function _loadMappings() {
   agentMappings.clear();
   const mappings = moduleConfig.mappings || {};
@@ -290,7 +337,7 @@ export default {
         if (resource === 'mappings') {
           if (req.method === 'GET') {
             const mappings = moduleConfig.mappings || {};
-            return { ok: true, mappings };
+            return { ok: true, mappings, inherited: _buildInheritedMappings() };
           }
 
           if (req.method === 'POST' && body) {
@@ -317,7 +364,7 @@ export default {
                 remoteManager?.closeAgent(agentId);
                 remoteManager?.cleanupAgentProcesses(agentId);
               }
-              return { ok: true, mappings: current, message: '映射已保存' };
+              return { ok: true, mappings: current, inherited: _buildInheritedMappings(), message: '映射已保存' };
             }
             return { error: 'config_service_unavailable' };
           }
@@ -490,12 +537,12 @@ function _hookToolExecutor() {
   toolExecutor.executeToolCall = async function (ctx, toolName, args) {
     const agentId = ctx?.agent?.id;
 
-    // 检查该 Agent 是否配置了 remote
-    const remoteConfig = agentId ? agentMappings.get(String(agentId)) : null;
+    // 检查该 Agent 是否配置了 remote（未配置时沿父链继承祖先绑定）
+    const mapping = agentId ? _resolveAgentMapping(agentId) : null;
 
-    if (remoteConfig && INTERCEPTED_TOOLS.has(toolName)) {
-      log?.info('[Remote] 拦截工具调用，桥接到远程', { agentId, toolName });
-      return _handleRemoteToolCall(ctx, toolName, args, remoteConfig, agentId);
+    if (mapping && INTERCEPTED_TOOLS.has(toolName)) {
+      log?.info('[Remote] 拦截工具调用，桥接到远程', { agentId, toolName, sourceAgentId: mapping.sourceAgentId });
+      return _handleRemoteToolCall(ctx, toolName, args, mapping.config, agentId);
     }
 
     // 非 remote Agent 或不需要拦截的工具，走原始逻辑
