@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { GroupRegistry } from "../../../../src/platform/services/group_chat/group_registry.js";
+import { GroupMessageStore } from "../../../../src/platform/services/group_chat/group_message_store.js";
 import { GroupChatService } from "../../../../src/platform/services/group_chat/group_chat_service.js";
 import { makeTestLogger, testLoggerRoot } from "../../../helpers/test_logger.js";
 
@@ -94,6 +95,143 @@ describe("GroupRegistry — 退群记录与归档", () => {
     assert.strictEqual(restored.status, "archived");
     assert.strictEqual(restored.exitedMembers.length, 1);
     assert.strictEqual(restored.exitedMembers[0].reason, "left");
+  });
+});
+
+describe("GroupMessageStore — 缓存未加载时 append 不得清空历史", () => {
+  it("重启后（新实例、缓存为空）append 应保留既有历史", async () => {
+    const messagesDir = path.join(tmpDir, "messages");
+    const mkMsg = (text) => ({
+      id: `m-${Math.random().toString(36).slice(2, 10)}`,
+      kind: "group",
+      groupId: "g1",
+      from: "a1",
+      payload: { text },
+      createdAt: new Date().toISOString().replace("T", " ").slice(0, 19)
+    });
+
+    // 第一次会话：写入两条消息
+    const store1 = new GroupMessageStore({ messagesDir, logger: makeTestLogger("GMS") });
+    await store1.init();
+    await store1.append("g1", mkMsg("第一条"));
+    await store1.append("g1", mkMsg("第二条"));
+
+    // 模拟重启：新实例，缓存与 _loaded 均为空
+    const store2 = new GroupMessageStore({ messagesDir, logger: makeTestLogger("GMS") });
+    await store2.init();
+    await store2.append("g1", mkMsg("第三条"));
+
+    const reloaded = await store2.loadMessages("g1");
+    assert.strictEqual(reloaded.length, 3, "重启后 append 必须保留既有历史");
+    assert.deepStrictEqual(
+      reloaded.map(m => m.payload.text),
+      ["第一条", "第二条", "第三条"]
+    );
+  });
+});
+
+describe("GroupChatService — 启动对账（旧数据处理）", () => {
+  function makeService({ agentStatusMap }) {
+    return new GroupChatService({
+      bus: { send: () => ({ messageId: "m" }) },
+      heartbeatBroker: { broadcast() {} },
+      org: {
+        getAgent: (id) => agentStatusMap.get(id) ?? null,
+        getRole: () => null
+      },
+      runtimeEvents: { onAgentTerminated() {} },
+      runtimeLlm: { registerMessageFormatter() {} },
+      logRoot: testLoggerRoot,
+      dataDir: path.join(tmpDir, "data"),
+      runtimeDir: path.join(tmpDir, "runtime")
+    });
+  }
+
+  it("已删除智能体退群（留存记录）+ 不足 3 人解散；archived 群不受影响", async () => {
+    // 预置群数据（与服务同 dataDir 构造路径）
+    const reg = new GroupRegistry({
+      dataDir: path.join(tmpDir, "data", "runtime", "state"),
+      logger: makeTestLogger("GroupRegistry")
+    });
+    const groupA = await reg.create({ name: "群A", members: ["dead1", "alive1", "alive2"] });
+    const groupB = await reg.create({ name: "群B", members: ["alive1", "alive2"] });
+    const groupC = await reg.create({ name: "群C", members: ["dead2", "alive1", "alive2", "alive3"] });
+    await reg.archive(groupC.id);
+
+    const agentStatusMap = new Map([
+      ["dead1", { name: "已删1", status: "terminated" }],
+      ["dead2", { name: "已删2", status: "terminated" }],
+      ["alive1", { name: "活跃1", status: "active" }],
+      ["alive2", { name: "活跃2", status: "active" }],
+      ["alive3", { name: "活跃3", status: "active" }]
+    ]);
+
+    const svc = makeService({ agentStatusMap });
+    await svc.init();
+
+    // 从磁盘重新加载（服务持有独立 registry 实例，断言用最新持久化状态）
+    await reg.load();
+
+    // 群 A：dead1 退群（留存 terminated 记录）→ 剩 2 人 → 解散归档
+    const a = reg.get(groupA.id);
+    assert.strictEqual(a.status, "archived");
+    assert.deepStrictEqual(a.members.sort(), ["alive1", "alive2"]);
+    assert.strictEqual(a.exitedMembers.length, 1);
+    assert.strictEqual(a.exitedMembers[0].id, "dead1");
+    assert.strictEqual(a.exitedMembers[0].reason, "terminated");
+
+    // 群 B：本来就 2 人 → 解散归档
+    assert.strictEqual(reg.get(groupB.id).status, "archived");
+
+    // 群 C：archived 不受检查——成员与退出记录都不动
+    const c = reg.get(groupC.id);
+    assert.strictEqual(c.status, "archived");
+    assert.deepStrictEqual(c.members.sort(), ["alive1", "alive2", "alive3", "dead2"]);
+    assert.strictEqual(c.exitedMembers.length, 0);
+
+    // 群历史留档：A 有退群 + 解散系统消息；B 有解散消息；C 无新增消息
+    const msgsA = await svc.messageStore.loadMessages(groupA.id);
+    const textsA = msgsA.map(m => m.payload.text);
+    assert.ok(textsA.some(t => t.includes("已删1 已离线，自动退出群聊")), "A 应有退群系统消息");
+    assert.ok(textsA.some(t => t.includes("群聊成员不足 3 人，已自动解散")), "A 应有解散系统消息");
+
+    const msgsB = await svc.messageStore.loadMessages(groupB.id);
+    assert.ok(msgsB.some(m => m.payload.text.includes("群聊成员不足 3 人，已自动解散")), "B 应有解散系统消息");
+
+    const msgsC = await svc.messageStore.loadMessages(groupC.id);
+    assert.strictEqual(msgsC.length, 0, "archived 群不应被写入任何对账消息");
+  });
+
+  it("活跃智能体不应被误清理；对账幂等（重复执行无变化）", async () => {
+    const reg = new GroupRegistry({
+      dataDir: path.join(tmpDir, "data", "runtime", "state"),
+      logger: makeTestLogger("GroupRegistry")
+    });
+    const group = await reg.create({ name: "群", members: ["alive1", "alive2", "alive3"] });
+
+    const svc = makeService({
+      agentStatusMap: new Map([
+        ["alive1", { name: "活跃1", status: "active" }],
+        ["alive2", { name: "活跃2", status: "active" }],
+        ["alive3", { name: "活跃3", status: "active" }]
+      ])
+    });
+    await svc.init();
+
+    // 从磁盘重新加载（服务持有独立 registry 实例，断言用最新持久化状态）
+    await reg.load();
+
+    const afterFirst = reg.get(group.id);
+    assert.strictEqual(afterFirst.status, "active", "3 个活跃成员不应解散");
+    assert.deepStrictEqual(afterFirst.members.sort(), ["alive1", "alive2", "alive3"]);
+    assert.strictEqual(afterFirst.exitedMembers.length, 0);
+
+    // 重复对账：幂等
+    await svc._reconcileGroupsOnStartup();
+    await reg.load();
+    const afterSecond = reg.get(group.id);
+    assert.strictEqual(afterSecond.status, "active");
+    assert.strictEqual(afterSecond.exitedMembers.length, 0);
   });
 });
 

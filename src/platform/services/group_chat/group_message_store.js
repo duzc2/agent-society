@@ -30,6 +30,9 @@ export class GroupMessageStore {
 
     /** @type {Map<string, Promise<void>>} 每群文件的串行写队列，防止 append 与整文件重写竞争 */
     this._writeQueues = new Map();
+
+    /** @type {Set<string>} 已从磁盘加载过缓存的群（防止空缓存重写覆盖历史文件） */
+    this._loaded = new Set();
   }
 
   /**
@@ -76,14 +79,23 @@ export class GroupMessageStore {
   }
 
   /**
+   * 确保群消息缓存已从磁盘加载（整文件重写前缓存必须与磁盘一致，
+   * 否则空缓存会把已有历史文件清空）。
+   * @param {string} groupId
+   */
+  async _ensureLoaded(groupId) {
+    if (!this._loaded.has(groupId)) {
+      await this.loadMessages(groupId);
+    }
+  }
+
+  /**
    * 写入群消息（内存先行 + 队列内全量落盘）。
    * @param {string} groupId
    * @param {GroupMessage} message
    */
   async append(groupId, message) {
-    if (!this._cache.has(groupId)) {
-      this._cache.set(groupId, []);
-    }
+    await this._ensureLoaded(groupId);
     this._cache.get(groupId).push(message);
     await this._rewrite(groupId);
   }
@@ -95,9 +107,7 @@ export class GroupMessageStore {
    */
   async appendBatch(groupId, messages) {
     if (messages.length === 0) return;
-    if (!this._cache.has(groupId)) {
-      this._cache.set(groupId, []);
-    }
+    await this._ensureLoaded(groupId);
     this._cache.get(groupId).push(...messages);
     await this._rewrite(groupId);
   }
@@ -110,6 +120,7 @@ export class GroupMessageStore {
    * @returns {Promise<GroupMessage|null>} 更新后的消息；消息不存在返回 null
    */
   async update(groupId, messageId, payload) {
+    await this._ensureLoaded(groupId);
     const cached = this._cache.get(groupId);
     if (!cached) return null;
     const idx = cached.findIndex(m => m.id === messageId);
@@ -126,6 +137,7 @@ export class GroupMessageStore {
    * @returns {Promise<GroupMessage|null>} 被删除的消息；消息不存在返回 null
    */
   async remove(groupId, messageId) {
+    await this._ensureLoaded(groupId);
     const cached = this._cache.get(groupId);
     if (!cached) return null;
     const idx = cached.findIndex(m => m.id === messageId);
@@ -173,10 +185,12 @@ export class GroupMessageStore {
       }
 
       this._cache.set(groupId, messages);
+      this._loaded.add(groupId);
       return messages;
     } catch (err) {
       if (err.code === "ENOENT") {
         this._cache.set(groupId, []);
+        this._loaded.add(groupId);
         return [];
       }
       this.log.error("[GroupMessageStore] 加载群消息失败", {

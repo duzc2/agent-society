@@ -57,6 +57,9 @@ export class GroupChatService {
     await this.registry.load();
     await this.messageStore.init();
 
+    // 启动对账：清理旧数据（已删除智能体退群、不足 3 人的群解散）；archived 群不做检查
+    await this._reconcileGroupsOnStartup();
+
     // 监听智能体终止事件，自动清理群成员身份
     this.runtimeEvents.onAgentTerminated((event) => {
       void this._onAgentTerminated(event.agentId);
@@ -660,6 +663,48 @@ export class GroupChatService {
     }
 
     return base;
+  }
+
+  /**
+   * 启动对账（旧数据处理）：
+   * - 仍然 active 的群里，已删除/已终止的智能体退群（留存 exitedMembers 记录）
+   * - 清理后不足 3 人的群自动解散
+   * - archived 群不做检查
+   */
+  async _reconcileGroupsOnStartup() {
+    const groups = this.registry.list("active");
+    let leftCount = 0;
+    let dissolvedCount = 0;
+
+    for (const group of groups) {
+      // 1. 群里已删除的智能体退群
+      const deadIds = group.members.filter(id => {
+        const agent = this.org.getAgent(id);
+        return !agent || agent.status === "terminated" || agent.status === "deleted";
+      });
+      for (const id of deadIds) {
+        const agent = this.org.getAgent(id);
+        const name = agent ? agent.name : id;
+        await this.registry.removeMembers(group.id, [id], "terminated");
+        const sysMsg = this.messageStore.createSystemMessage(group.id, `${name} 已离线，自动退出群聊`);
+        await this.messageStore.append(group.id, sysMsg);
+        leftCount++;
+      }
+
+      // 2. 清理后剩余成员不足 3 人 → 解散
+      const current = this.registry.get(group.id);
+      if (current && current.status === "active") {
+        const realMembers = current.members.filter(m => m !== "user");
+        if (realMembers.length < 3) {
+          await this._autoDissolveIfSmall(group.id);
+          dissolvedCount++;
+        }
+      }
+    }
+
+    if (leftCount > 0 || dissolvedCount > 0) {
+      this.log.info("[GroupChatService] 启动对账完成", { leftCount, dissolvedCount });
+    }
   }
 
   /**
