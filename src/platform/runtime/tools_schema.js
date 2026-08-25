@@ -1157,12 +1157,12 @@ export class ToolSchema {
         type: "function",
         function: {
           name: "create_group",
-          description: "创建群聊，邀请指定成员加入。群聊用于多个智能体之间持续协作和反复沟通。创建后自动向所有成员发送入群通知，通知中包含全部成员名单和拉群原因。",
+          description: "创建群聊，邀请指定成员加入。群聊用于多个智能体之间持续协作和反复沟通。创建后自动向所有成员发送入群通知，通知中包含全部成员名单和拉群原因。群聊至少需要 3 名成员（memberIds 去重后至少 3 个智能体 ID，root 和 user 不能入群）。创建者不会自动加入群聊，如需自己入群请将自己的 ID 包含在 memberIds 中。",
           parameters: {
             type: "object",
             properties: {
               name: { type: "string", description: "群名（必填）" },
-              memberIds: { type: "array", items: { type: "string" }, description: "初始成员 ID 列表（必填，至少一个）" },
+              memberIds: { type: "array", items: { type: "string" }, description: "初始成员 ID 列表（必填，去重后至少 3 个；root 和 user 不能入群）" },
               description: { type: "string", description: "群描述（可选）" },
               reason: { type: "string", description: "拉群原因（必填），说明为什么要创建这个群、需要大家协作什么。会写入首条系统消息并通知所有成员。" }
             },
@@ -1205,7 +1205,7 @@ export class ToolSchema {
         type: "function",
         function: {
           name: "leave_group",
-          description: "主动退出群聊。退出后不再接收该群的消息。",
+          description: "主动退出群聊。退出后不再接收该群的消息。注意：成员退出后若群内智能体成员不足 3 人，该群将被自动解散并归档，历史消息仍可查询。",
           parameters: {
             type: "object",
             properties: {
