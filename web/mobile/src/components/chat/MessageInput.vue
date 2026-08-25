@@ -11,6 +11,15 @@ import { useKeyboard } from '../../utils/keyboard';
 const props = defineProps<{
   agentId: string;
   orgId: string;
+  placeholder?: string;
+  /** 隐藏智能体属性入口按钮（群聊模式没有对应智能体） */
+  hideAgentProps?: boolean;
+  /** 禁用输入与发送（已解散的群聊等只读场景） */
+  disabled?: boolean;
+}>();
+
+const emit = defineEmits<{
+  send: [text: string];
 }>();
 
 const chatStore = useChatStore();
@@ -32,13 +41,9 @@ async function sendMessage() {
   const text = localInput.value.trim();
   if (!text || !props.agentId) return;
 
-  try {
-    await chatStore.sendMessage(props.agentId, text, props.agentId);
-    localInput.value = '';
-    chatStore.updateInputValue(props.agentId, '');
-  } catch (e: any) {
-    appStore.setError(e?.message || '发送失败');
-  }
+  emit('send', text);
+  localInput.value = '';
+  chatStore.updateInputValue(props.agentId, '');
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -69,7 +74,7 @@ function focusInput() {
     <div class="flex items-end gap-2 px-3 py-2">
       <!-- 智能体属性入口 -->
       <button
-        v-if="agentId && agentId !== 'user'"
+        v-if="agentId && agentId !== 'user' && !hideAgentProps"
         class="self-center w-8 h-8 rounded-lg flex items-center justify-center shrink-0 text-[var(--text-3)] hover:bg-[var(--surface-3)] hover:text-[var(--text-1)] transition-colors active:scale-95"
         @click="appStore.navigateToAgentProps(props.agentId)"
         type="button"
@@ -84,21 +89,21 @@ function focusInput() {
           ref="inputRef"
           v-model="localInput"
           class="w-full resize-none rounded-xl px-3 py-2 text-sm bg-[var(--surface-2)] text-[var(--text-1)] border border-[var(--border)] focus:outline-none focus:border-[var(--primary)] max-h-[120px]"
-          :placeholder="agentId ? '输入消息...' : '未选择智能体'"
+          :placeholder="placeholder || (agentId ? '输入消息...' : '未选择智能体')"
           rows="1"
           @input="chatStore.updateInputValue(props.agentId, localInput)"
           @keydown="handleKeydown"
-          :disabled="!agentId"
+          :disabled="props.disabled || !agentId"
         />
       </div>
 
       <!-- 发送按钮 -->
       <button
         class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-colors active:scale-95"
-        :class="localInput.trim() && agentId
+        :class="localInput.trim() && agentId && !props.disabled
           ? 'bg-[var(--primary)] text-white'
           : 'bg-[var(--surface-3)] text-[var(--text-3)]'"
-        :disabled="!localInput.trim() || !agentId"
+        :disabled="!localInput.trim() || !agentId || props.disabled"
         @click="sendMessage"
         type="button"
         aria-label="发送消息"

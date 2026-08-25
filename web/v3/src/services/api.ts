@@ -150,6 +150,10 @@ export function normalizeHeartbeatMessage(rawMsg: any, agentId: string): Message
     knowledgeContext: typeof rawMsg.knowledgeContext === 'string' ? rawMsg.knowledgeContext : undefined,
     scheduledDeliveryTime: rawMsg.scheduledDeliveryTime,
     deliveredAt: rawMsg.deliveredAt,
+    // 群扇出消息的通用附加字段（extras.senderAgentId 存在 = 群来源）
+    groupName: rawMsg.extras?.groupName ?? undefined,
+    senderAgentId: rawMsg.extras?.senderAgentId ?? undefined,
+    isSystem: rawMsg.extras?.senderAgentId === 'system' ? true : undefined,
   };
 }
 
@@ -740,6 +744,89 @@ export const apiService = {
     return request(`/modules/localcmd/history?agentId=${encodeURIComponent(agentId)}`, { method: 'DELETE' });
   },
 
+  // ---- 群聊 ----
+
+  /** 获取所有群列表 */
+  async getGroups(orgId?: string): Promise<{ groups: Array<{ id: string; name: string; creatorId: string; memberCount: number; isMember: boolean }> }> {
+    const q = orgId ? `?orgId=${encodeURIComponent(orgId)}` : '';
+    return request(`/groups${q}`);
+  },
+
+  /** 获取群详情 */
+  async getGroupInfo(groupId: string): Promise<{
+    id: string; name: string; description?: string; orgKey: string;
+    creatorId: string; members: string[]; createdAt: string; dissolved?: boolean;
+  }> {
+    return request(`/groups/${encodeURIComponent(groupId)}`);
+  },
+
+  /** 获取群消息历史（后端分页仅支持 limit+offset） */
+  async getGroupMessages(groupId: string, params: { limit?: number; offset?: number } = {}): Promise<{
+    messages: Array<{ id: string; groupId: string; kind: string; from: string; taskId?: string | null; payload: { text: string }; createdAt: string }>;
+    hasMore: boolean;
+  }> {
+    const q = new URLSearchParams();
+    if (params.limit) q.set('limit', String(params.limit));
+    if (params.offset) q.set('offset', String(params.offset));
+    const qs = q.toString();
+    return request(`/groups/${encodeURIComponent(groupId)}/messages${qs ? `?${qs}` : ''}`);
+  },
+
+  /** 创建群聊 */
+  async createGroup(name: string, memberIds: string[], description?: string, reason?: string): Promise<{ id: string; name: string }> {
+    return request('/groups', {
+      method: 'POST',
+      body: JSON.stringify({ name, memberIds, description, reason }),
+    });
+  },
+
+  /** 发送群消息 */
+  async sendGroupMessage(groupId: string, text: string): Promise<{ messageId: string; memberCount: number }> {
+    return request(`/groups/${encodeURIComponent(groupId)}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    });
+  },
+
+  /** 邀请成员入群 */
+  async inviteToGroup(groupId: string, memberIds: string[], reason?: string): Promise<{ ok: boolean }> {
+    return request(`/groups/${encodeURIComponent(groupId)}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ memberIds, reason }),
+    });
+  },
+
+  /** 编辑群消息 */
+  async updateGroupMessage(groupId: string, messageId: string, text: string): Promise<{ ok: boolean }> {
+    return request(`/groups/${encodeURIComponent(groupId)}/messages/${encodeURIComponent(messageId)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ text }),
+    });
+  },
+
+  /** 删除群消息 */
+  async deleteGroupMessage(groupId: string, messageId: string): Promise<{ ok: boolean }> {
+    return request(`/groups/${encodeURIComponent(groupId)}/messages/${encodeURIComponent(messageId)}`, {
+      method: 'DELETE',
+    });
+  },
+
+  /** 移出成员 */
+  async removeFromGroup(groupId: string, memberId: string): Promise<{ ok: boolean }> {
+    return request(`/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(memberId)}`, {
+      method: 'DELETE',
+    });
+  },
+
+  /** 退群 */
+  async leaveGroup(groupId: string): Promise<{ ok: boolean }> {
+    return request(`/groups/${encodeURIComponent(groupId)}/leave`, { method: 'POST' });
+  },
+
+  /** 解散群 */
+  async dissolveGroup(groupId: string): Promise<{ ok: boolean }> {
+    return request(`/groups/${encodeURIComponent(groupId)}`, { method: 'DELETE' });
+  },
 
 };
 

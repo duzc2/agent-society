@@ -180,6 +180,47 @@ onMounted(() => {
         agentStore.updateMoodColors(agentId, colors);
       }
     });
+    // 群聊心跳事件
+    heartbeatService.onMessage('group_message', (msg) => {
+      const data = msg.payload as any;
+      if (data?.groupId && data?.message) {
+        chatStore.appendGroupMessage({
+          id: data.message.id,
+          groupId: data.groupId,
+          kind: data.message.kind || 'group',
+          from: data.message.from || '',
+          senderName: data.message.senderName,
+          senderRole: data.message.senderRole,
+          payload: data.message.payload || { text: '' },
+          createdAt: data.message.createdAt || new Date().toISOString(),
+        });
+      }
+    });
+    heartbeatService.onMessage('group_event', (msg) => {
+      const data = msg.payload as any;
+      if (data?.action === 'group_created' || data?.action === 'group_updated') {
+        chatStore.fetchGroupList();
+        // 当前打开的群：刷新成员信息与消息（邀请/退出/编辑/删除后即时同步）
+        if (chatStore.activeGroupId && data.groupId === chatStore.activeGroupId) {
+          apiService.getGroupInfo(data.groupId).then((info: any) => {
+            if (info && !info.error) chatStore.groupMetaCache[data.groupId] = info;
+          }).catch((err: any) => console.error('[App] 刷新群信息失败', err));
+          chatStore.fetchGroupMessages(data.groupId);
+        }
+      } else if (data?.action === 'group_dissolved') {
+        // 解散的群保留在列表（归档分类），可随时查阅历史；正在看该群的用户不被踢出
+        if (data.group) {
+          chatStore.updateGroupList(data.group);
+          if (chatStore.groupMetaCache[data.groupId]) {
+            chatStore.groupMetaCache[data.groupId].status = 'archived';
+          } else {
+            chatStore.groupMetaCache[data.groupId] = data.group;
+          }
+        }
+      } else if (data?.action === 'member_added' || data?.action === 'member_removed') {
+        chatStore.fetchGroupList();
+      }
+    });
     heartbeatService.start();
 
     // 启动 UI 命令服务（处理智能体的页面操作请求）

@@ -14,10 +14,13 @@ import { getErrorMessage } from "../utils/error_utils.js";
 export class AgentTools {
   /**
    * @param {object} runtime - Runtime 实例引用
+   * @param {object} [groupChatService] - GroupChatService 实例（由 DI 注入，在 registry.ensureReady 后设置）
    */
-  constructor(runtime) {
+  constructor(runtime, groupChatService) {
     /** @type {object} Runtime 实例引用 */
     this.runtime = runtime;
+    /** @type {object|null} 群聊服务（DI 注入） */
+    this.groupChatService = groupChatService || null;
   }
 
   _executeFindRoleByName(ctx, args) {
@@ -145,7 +148,17 @@ export class AgentTools {
       selfAgentId
     });
 
-    return { self, selfOrg, otherOrgs };
+    return { self, selfOrg, otherOrgs, groups: this._getGroupSummaries(selfAgentId) };
+  }
+
+  /**
+   * 获取群聊摘要（通过 DI 注入的 groupChatService）。
+   * @param {string} callerId
+   * @returns {object[]}
+   */
+  _getGroupSummaries(callerId) {
+    if (!this.groupChatService) return [];
+    return this.groupChatService.getGroupSummaries(callerId);
   }
 
   async _executeCreateRole(ctx, args) {

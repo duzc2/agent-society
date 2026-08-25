@@ -12,9 +12,19 @@ import ArtifactsList from '../artifacts/ArtifactsList.vue';
 import { createDragEndHandler } from '../../utils/dialogBounds';
 import { isMoodDark } from '../../utils/moodColors';
 import { ZIndex } from '@primeuix/utils';
+import type { Agent } from '../../types';
 
 const props = defineProps<{
   orgId: string;
+  /** 外部数据模式：提供智能体列表时跳过 store 拉取与轮询（群成员列表复用场景） */
+  agents?: Agent[];
+  /** 归档分组标题文案（默认"归档"；群成员场景传"已退出成员"） */
+  archiveLabel?: string;
+}>();
+
+const emit = defineEmits<{
+  /** 外部数据模式下点击智能体（正常模式内部走 chatStore.setActiveAgent） */
+  select: [agentId: string];
 }>();
 
 const agentStore = useAgentStore();
@@ -23,8 +33,8 @@ const orgStore = useOrgStore();
 const appStore = useAppStore();
 const dialog = useDialog();
 
-// 当前组织的智能体列表
-const currentAgents = computed(() => agentStore.agentsMap[props.orgId] || []);
+// 当前组织的智能体列表（外部数据模式直接使用传入列表）
+const currentAgents = computed(() => props.agents ?? agentStore.agentsMap[props.orgId] ?? []);
 
 // 将智能体分为"活跃"和"已归档"两组
 // 活跃：online 或 busy | 已归档：offline（包括状态非 active 的 agent）
@@ -150,9 +160,9 @@ const openArtifacts = () => {
   return instance;
 };
 
-// 当组件挂载或 orgId 改变时加载智能体
+// 当组件挂载或 orgId 改变时加载智能体（外部数据模式不拉取）
 const loadAgents = (silent = false) => {
-  if (props.orgId) {
+  if (props.orgId && !props.agents) {
     agentStore.fetchAgentsByOrg(props.orgId, silent);
   }
 };
@@ -177,7 +187,8 @@ const stopPolling = () => {
 
 onMounted(() => {
   loadAgents();
-  startPolling();
+  // 外部数据模式不轮询（数据由父组件响应式提供）
+  if (!props.agents) startPolling();
 });
 
 onUnmounted(() => {
@@ -192,6 +203,11 @@ watch(() => props.orgId, () => {
  * 处理智能体点击事件
  */
 const handleAgentClick = (agent: any) => {
+  // 外部数据模式（群成员列表）：交给父组件决定（打开成员个人对话）
+  if (props.agents) {
+    emit('select', agent.id);
+    return;
+  }
   // 更新当前组织选中的智能体，切换对话内容
   chatStore.setActiveAgent(props.orgId, agent.id);
 };
@@ -210,9 +226,9 @@ const handleAbortAgent = async (e: Event, agentId: string) => {
     <!-- 头部功能区 -->
     <div class="p-2 border-b border-[var(--border)] bg-[var(--surface-1)]">
       <div class="flex items-center space-x-1 mb-1 px-1">
-        <Button 
-          v-if="props.orgId !== 'home'"
-          variant="text" 
+        <Button
+          v-if="props.orgId !== 'home' && !props.agents"
+          variant="text"
           size="small"
           class="!p-2 hover:!bg-[var(--surface-3)] group transition-all !min-w-0"
           title="工件管理器"
@@ -240,7 +256,7 @@ const handleAbortAgent = async (e: Event, agentId: string) => {
       <!-- 空状态 -->
       <div v-else-if="!agentStore.loading && activeAgents.length === 0 && archivedAgentCount === 0" class="flex flex-col items-center justify-center h-32 text-[var(--text-3)] opacity-50 px-4 text-center">
         <Bot class="w-8 h-8 mb-2" />
-        <span class="text-xs">该组织暂无智能体</span>
+        <span class="text-xs">{{ props.agents ? '暂无群成员' : '该组织暂无智能体' }}</span>
       </div>
 
       <!-- 智能体列表 -->
@@ -315,7 +331,7 @@ const handleAbortAgent = async (e: Event, agentId: string) => {
           >
             <component :is="showArchived ? ChevronDown : ChevronRight" class="w-3.5 h-3.5 mr-1.5 flex-shrink-0" />
             <Archive class="w-3.5 h-3.5 mr-1.5 flex-shrink-0" />
-            <span class="font-medium">归档 ({{ archivedAgentCount }})</span>
+            <span class="font-medium">{{ props.archiveLabel ?? '归档' }} ({{ archivedAgentCount }})</span>
           </button>
 
           <!-- 展开时显示归档列表 -->

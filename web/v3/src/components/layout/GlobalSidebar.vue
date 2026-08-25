@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
-import { LayoutGrid, Briefcase, Settings, ChevronLeft, ChevronRight, Home, Search, X, Loader2, Layers, Puzzle, Sparkles, FolderOpen, Pencil, Check, ChevronDown, Archive } from 'lucide-vue-next';
+import { LayoutGrid, Briefcase, Settings, ChevronLeft, ChevronRight, Home, Search, X, Loader2, Layers, Puzzle, Sparkles, FolderOpen, Pencil, Check, ChevronDown, Archive, MessageCircle, Users, Plus } from 'lucide-vue-next';
 import { VueDraggable } from 'vue-draggable-plus';
 import { useAppStore } from '../../stores/app';
 import { useOrgStore } from '../../stores/org';
@@ -10,7 +10,8 @@ import { templateApi } from '../../services/templateApi';
 import { apiService } from '../../services/api';
 import { orgTreeState } from '../../services/heartbeatService';
 import { useDialog } from 'primevue/usedialog';
-import { ref, watch, nextTick, computed } from 'vue';
+import { ref, watch, nextTick, computed, onMounted, onUnmounted } from 'vue';
+import Dialog from 'primevue/dialog';
 import ArtifactsList from '../artifacts/ArtifactsList.vue';
 import RoleTreeView from '../overview/RoleTreeView.vue';
 import { openSettingsWindow } from '../settings/settingsWindow';
@@ -32,6 +33,92 @@ const dialog = useDialog();
 
 const searchQuery = ref('');
 const showArchivedOrgs = ref(false);
+const showCreateGroupDialog = ref(false);
+const newGroupName = ref('');
+const newGroupDesc = ref('');
+const newGroupReason = ref('');
+const selectedMembers = ref<string[]>([]);
+const memberSearch = ref('');
+
+// 可用智能体（排除 user 和 root）
+const availableAgents = computed(() =>
+  agentStore.allAgents.filter(a => a.id !== 'user' && a.id !== 'root')
+);
+
+// 搜索过滤后的智能体列表
+const orgNameMap = computed(() => {
+  const map: Record<string, string> = {};
+  function walk(nodes: any[]) {
+    for (const n of nodes) {
+      // 组织节点：有 children 且有 roleName
+      if (n.children?.length > 0 && n.roleName) map[n.id] = n.roleName;
+      if (n.children) walk(n.children);
+    }
+  }
+  walk(orgTreeState.tree);
+  return map;
+});
+
+const filteredAgents = computed(() => {
+  const q = memberSearch.value.trim().toLowerCase();
+  if (!q) return availableAgents.value;
+  return availableAgents.value.filter(a => {
+    const orgName = orgNameMap.value[a.orgId] || '';
+    return a.name.toLowerCase().includes(q) ||
+      (a.role && a.role.toLowerCase().includes(q)) ||
+      orgName.toLowerCase().includes(q);
+  });
+});
+
+// 群列表（活跃 / 已解散归档分组，解散的群可随时查阅历史）
+const activeGroups = computed(() => chatStore.groupList.filter((g: any) => g.status !== 'archived'));
+const dissolvedGroups = computed(() => chatStore.groupList.filter((g: any) => g.status === 'archived'));
+const showDissolvedGroups = ref(false);
+
+// 点击群
+const handleGroupClick = (groupId: string) => {
+  const group = chatStore.groupList.find(g => g.id === groupId);
+  chatStore.setActiveGroup(groupId);
+  chatStore.fetchGroupMessages(groupId);
+  // 把群作为标签页打开，而不是覆盖层
+  appStore.openTab({
+    id: `group:${groupId}`,
+    type: 'group',
+    title: group?.name || '群聊'
+  });
+};
+
+// 创建群
+const handleCreateGroup = async () => {
+  if (!newGroupName.value.trim()) return;
+  if (!newGroupReason.value.trim()) {
+    // 拉群原因必填
+    return;
+  }
+  try {
+    await apiService.createGroup(newGroupName.value.trim(), selectedMembers.value, newGroupDesc.value.trim(), newGroupReason.value.trim());
+    showCreateGroupDialog.value = false;
+    newGroupName.value = '';
+    newGroupDesc.value = '';
+    newGroupReason.value = '';
+    selectedMembers.value = [];
+    memberSearch.value = '';
+    await chatStore.fetchGroupList();
+  } catch (e: any) {
+    console.error('[GlobalSidebar] 创建群失败', e);
+  }
+};
+
+// 监听来自 WorkspaceTabs 群列表的建群请求
+onMounted(() => {
+  window.addEventListener('open-create-group-dialog', () => {
+    showCreateGroupDialog.value = true;
+    agentStore.fetchAllAgents(true);
+  });
+});
+onUnmounted(() => {
+  window.removeEventListener('open-create-group-dialog', () => {});
+});
 
 // 检查指定组织是否已删除（org root 节点的 raw status 不是 "active"）
 const isOrgDeleted = (orgId: string): boolean => {
@@ -799,8 +886,8 @@ const handleOrgClick = (org: any) => {
 
     <div class="flex-grow overflow-y-auto p-2 space-y-1">
       <div v-if="!appStore.isSidebarCollapsed" class="px-3 py-2 flex items-center justify-between">
-        <span class="text-xs font-semibold text-[var(--text-3)] uppercase tracking-wider shrink-0">组织列表</span>
-        <div class="relative ml-2 flex-grow max-w-[120px]">
+        <span class="text-xs font-semibold text-[var(--text-3)] uppercase tracking-wider shrink-0">{{ appStore.activeSidebarTab === 'groups' ? '群' : '组织' }}</span>
+        <div v-if="appStore.activeSidebarTab === 'agents'" class="relative ml-2 flex-grow max-w-[120px]">
           <Search class="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-[var(--text-3)]" />
           <InputText 
             v-model="searchQuery" 
@@ -840,6 +927,110 @@ const handleOrgClick = (org: any) => {
         </div>
       </Button>
 
+      <!-- 侧边栏标签页：智能体 / 群（始终可见，收缩模式仅显示图标） -->
+      <div class="border-b border-[var(--border)]" :class="appStore.isSidebarCollapsed ? 'flex flex-col items-center gap-0.5 py-1' : 'flex items-center gap-1 px-2 mt-1 mb-1'">
+        <button
+          type="button"
+          class="transition-colors"
+          :class="appStore.isSidebarCollapsed
+            ? ['p-1.5 rounded', appStore.activeSidebarTab === 'agents' ? 'bg-[var(--surface-3)] text-[var(--primary)]' : 'text-[var(--text-3)]']
+            : ['flex-1 flex items-center justify-center gap-1 py-1.5 text-xs font-medium rounded-t', appStore.activeSidebarTab === 'agents' ? 'text-[var(--primary)] border-b-2 border-[var(--primary)]' : 'text-[var(--text-3)]']"
+          :title="appStore.isSidebarCollapsed ? '组织' : ''"
+          @click="appStore.activeSidebarTab = 'agents'"
+        >
+          <Users :class="appStore.isSidebarCollapsed ? 'w-4 h-4' : 'w-3.5 h-3.5'" />
+          <template v-if="!appStore.isSidebarCollapsed">组织</template>
+        </button>
+        <button
+          type="button"
+          class="transition-colors"
+          :class="appStore.isSidebarCollapsed
+            ? ['p-1.5 rounded', appStore.activeSidebarTab === 'groups' ? 'bg-[var(--surface-3)] text-[var(--primary)]' : 'text-[var(--text-3)]']
+            : ['flex-1 flex items-center justify-center gap-1 py-1.5 text-xs font-medium rounded-t', appStore.activeSidebarTab === 'groups' ? 'text-[var(--primary)] border-b-2 border-[var(--primary)]' : 'text-[var(--text-3)]']"
+          :title="appStore.isSidebarCollapsed ? '群' : ''"
+          @click="appStore.activeSidebarTab = 'groups'; chatStore.fetchGroupList()"
+        >
+          <MessageCircle :class="appStore.isSidebarCollapsed ? 'w-4 h-4' : 'w-3.5 h-3.5'" />
+          <template v-if="!appStore.isSidebarCollapsed">群</template>
+        </button>
+      </div>
+
+      <!-- 群 页 -->
+      <template v-if="appStore.activeSidebarTab === 'groups'">
+        <div class="flex-1 overflow-y-auto min-h-0">
+          <div class="space-y-1 px-1 py-1">
+            <div
+              v-for="g in activeGroups"
+              :key="g.id"
+              class="w-full flex items-center rounded cursor-pointer transition-colors text-[var(--text-2)] hover:bg-[var(--surface-2)]"
+              :class="[appStore.isSidebarCollapsed ? 'justify-center px-1 py-2' : 'justify-between px-3 py-2', chatStore.activeGroupId === g.id ? '!bg-[var(--surface-3)] !text-[var(--primary)]' : '']"
+              @click="handleGroupClick(g.id)"
+            >
+              <div class="flex items-center min-w-0" :class="appStore.isSidebarCollapsed ? 'justify-center' : ''">
+                <div class="shrink-0 flex items-center justify-center bg-[var(--primary-weak)] text-[var(--primary)] rounded font-bold"
+                  :class="appStore.isSidebarCollapsed ? 'w-8 h-8 text-xs' : 'w-5 h-5 mr-3 text-xs'">
+                  <MessageCircle :class="appStore.isSidebarCollapsed ? 'w-4 h-4' : 'w-3 h-3'" />
+                </div>
+                <template v-if="!appStore.isSidebarCollapsed">
+                  <div class="flex flex-col min-w-0">
+                    <span class="truncate font-medium leading-tight">{{ g.name }}</span>
+                    <span class="text-[10px] text-[var(--text-3)]">{{ g.memberCount }} 人</span>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- 已解散（归档）折叠区 -->
+            <div v-if="dissolvedGroups.length > 0 && !appStore.isSidebarCollapsed" class="mt-2 border-t border-[var(--border)] pt-1">
+              <button
+                class="w-full flex items-center px-3 py-1.5 text-[11px] text-[var(--text-3)] rounded hover:bg-[var(--surface-2)] transition-colors"
+                @click="showDissolvedGroups = !showDissolvedGroups"
+                type="button"
+              >
+                <component :is="showDissolvedGroups ? ChevronDown : ChevronRight" class="w-3.5 h-3.5 mr-1.5 flex-shrink-0" />
+                <Archive class="w-3.5 h-3.5 mr-1.5 flex-shrink-0" />
+                <span>已解散 ({{ dissolvedGroups.length }})</span>
+              </button>
+              <template v-if="showDissolvedGroups">
+                <div
+                  v-for="g in dissolvedGroups"
+                  :key="g.id"
+                  class="w-full flex items-center rounded cursor-pointer transition-colors text-[var(--text-2)] hover:bg-[var(--surface-2)] opacity-60 px-3 py-2"
+                  :class="chatStore.activeGroupId === g.id ? '!bg-[var(--surface-3)] !text-[var(--primary)]' : ''"
+                  @click="handleGroupClick(g.id)"
+                >
+                  <div class="shrink-0 w-5 h-5 mr-3 flex items-center justify-center bg-[var(--surface-3)] text-[var(--text-3)] rounded">
+                    <MessageCircle class="w-3 h-3" />
+                  </div>
+                  <div class="flex flex-col min-w-0">
+                    <span class="truncate font-medium leading-tight">{{ g.name }}</span>
+                    <span class="text-[10px] text-[var(--text-3)]">已解散 · {{ g.memberCount }} 人</span>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <div v-if="chatStore.groupList.length === 0" class="text-center text-[var(--text-3)] text-xs py-6">
+              暂无群聊
+            </div>
+          </div>
+        </div>
+        <!-- 新建群聊按钮 -->
+        <div class="p-2 border-t border-[var(--border)]">
+          <Button
+            variant="outlined"
+            class="w-full !justify-center !text-xs !py-1.5"
+            :class="appStore.isSidebarCollapsed ? '!px-1' : ''"
+            @click="showCreateGroupDialog = true"
+          >
+            <Plus class="w-3.5 h-3.5" :class="appStore.isSidebarCollapsed ? '' : 'mr-1'" />
+            <template v-if="!appStore.isSidebarCollapsed">新建群聊</template>
+          </Button>
+        </div>
+      </template>
+
+      <!-- 智能体 页（可拖拽的组织列表） -->
+      <template v-if="appStore.activeSidebarTab === 'agents'">
       <!-- 可拖拽的组织列表 -->
       <VueDraggable
         v-model="draggableOrgs"
@@ -917,7 +1108,7 @@ const handleOrgClick = (org: any) => {
         </Button>
       </VueDraggable>
 
-      <!-- 已归档的组织 -->
+      <!-- 已归档的组织（仅在智能体标签页内展示） -->
       <div v-if="archivedOrgs.length > 0 && !searchQuery" class="border-t border-[var(--border)] mt-2 pt-1">
         <button
           class="w-full flex items-center px-3 py-2 text-xs text-[var(--text-3)] hover:bg-[var(--surface-2)] transition-colors rounded"
@@ -953,8 +1144,93 @@ const handleOrgClick = (org: any) => {
           </Button>
         </div>
       </div>
+      </template>
     </div>
   </aside>
+
+  <!-- 新建群聊对话框 -->
+  <Dialog
+    v-model:visible="showCreateGroupDialog"
+    header="新建群聊"
+    modal
+    :style="{ width: '560px' }"
+    :draggable="false"
+    @show="agentStore.fetchAllAgents(true)"
+  >
+    <div class="flex flex-col gap-3 py-2">
+      <InputText
+        v-model="newGroupName"
+        placeholder="群聊名称（必填）"
+        class="!w-full"
+        @keydown.enter="handleCreateGroup"
+      />
+      <InputText
+        v-model="newGroupDesc"
+        placeholder="群聊描述（选填）"
+        class="!w-full"
+      />
+      <InputText
+        v-model="newGroupReason"
+        placeholder="拉群原因（必填，将通知给所有成员）"
+        class="!w-full"
+        @keydown.enter="handleCreateGroup"
+      />
+      <!-- 成员选择 -->
+      <div class="flex flex-col gap-1.5">
+        <span class="text-xs text-[var(--text-3)]">选择成员</span>
+        <!-- 搜索框 -->
+        <div class="relative">
+          <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-3)]" />
+          <input
+            v-model="memberSearch"
+            type="text"
+            placeholder="搜索名称、角色或组织..."
+            class="w-full pl-8 pr-3 py-1.5 text-sm rounded-md border border-[var(--border-1)] bg-[var(--surface-1)] text-[var(--text-1)] placeholder:text-[var(--text-3)] focus:outline-none focus:border-[var(--primary)]"
+          />
+        </div>
+        <div v-if="filteredAgents.length === 0" class="text-xs text-[var(--text-3)] py-2 text-center">
+          {{ memberSearch ? '无匹配智能体' : '暂无可选智能体' }}
+        </div>
+        <div v-else class="max-h-48 overflow-y-auto border border-[var(--border-1)] rounded-md">
+          <label
+            v-for="agent in filteredAgents"
+            :key="agent.id"
+            class="flex items-center gap-2 px-3 py-2 hover:bg-[var(--surface-2)] cursor-pointer border-b border-[var(--border-1)] last:border-b-0"
+          >
+            <input
+              type="checkbox"
+              :value="agent.id"
+              v-model="selectedMembers"
+              class="w-4 h-4 accent-[var(--primary)] shrink-0"
+            />
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="text-sm text-[var(--text-1)] truncate">{{ agent.name }}</span>
+                <span v-if="agent.role" class="text-xs text-[var(--text-3)] shrink-0">{{ agent.role }}</span>
+              </div>
+              <div v-if="orgNameMap[agent.orgId]" class="text-[11px] text-[var(--text-3)] truncate">{{ orgNameMap[agent.orgId] }}</div>
+            </div>
+          </label>
+        </div>
+        <span v-if="selectedMembers.length > 0" class="text-xs" :class="selectedMembers.length <= 2 ? 'text-red-400' : 'text-[var(--text-3)]'">
+          已选 {{ selectedMembers.length }} 个成员{{ selectedMembers.length <= 2 ? '（至少需要 3 个）' : '' }}
+        </span>
+      </div>
+    </div>
+    <template #footer>
+      <Button
+        label="取消"
+        variant="text"
+        @click="showCreateGroupDialog = false; selectedMembers = []; memberSearch = ''; newGroupReason = ''"
+      />
+      <Button
+        label="创建"
+        class="!bg-[var(--primary)] !text-white"
+        :disabled="!newGroupName.trim() || selectedMembers.length <= 2 || !newGroupReason.trim()"
+        @click="handleCreateGroup"
+      />
+    </template>
+  </Dialog>
 </template>
 
 <style scoped>

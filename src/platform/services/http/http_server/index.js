@@ -54,6 +54,10 @@ import "./roles.js";
 import "./knowledge_tree.js";
 // mood routes now auto-registered via registry.declare()
 import "./mood_routes.js";
+// group-chat service auto-registered via registry.declare() (must import before routes)
+import "../../group_chat/group_chat_service.js";
+// group-chat routes now auto-registered via registry.declare()
+import "../../group_chat/group_routes.js";
 
 /**
  * HTTP服务器组件：提供REST API接口与Agent Society交互。
@@ -295,6 +299,8 @@ export class HTTPServer {
       toolGroupManager: this.society?.runtime?.toolGroupManager ?? null,
       logRoot: this.society?.runtime?.loggerRoot ?? null,
       heartbeatBroker: this.society?.runtime?.heartbeatBroker ?? null,
+      bus: this.society?.runtime?.bus ?? null,
+      org: this.society?.runtime?.org ?? null,
       workspacesDir: this.society?.runtime?.config?.workspacesDir ?? null,
       dataDir: this.society?.runtime?.dataDir ?? null,
       runtimeDir: this._runtimeDir,
@@ -308,6 +314,9 @@ export class HTTPServer {
     const runtime = this.society?.runtime;
     if (runtime) {
       runtime.workspaceFileAccessService = registry.getService("workspaceFileAccessService");
+      // 注入 DI 服务到 ToolExecutor 和 AgentTools（避免 registry.getService 调用）
+      runtime._toolExecutor.groupTools = registry.getService("groupTools");
+      runtime._toolExecutor.agentTools.groupChatService = registry.getService("groupChatService");
     }
   }
 

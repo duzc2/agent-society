@@ -62,7 +62,9 @@ export class MessageBus {
       to: message.to,
       from: message.from,
       payload: message.payload,
-      taskId: message.taskId
+      taskId: message.taskId,
+      // 通用附加字段透传通道（模块间扩展数据，总线不感知具体内容）
+      extras: message.extras ?? null
     };
 
     // 延迟投递

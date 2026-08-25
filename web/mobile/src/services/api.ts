@@ -115,6 +115,10 @@ export function normalizeHeartbeatMessage(rawMsg: any, agentId: string): Message
     knowledgeContext: typeof rawMsg.knowledgeContext === 'string' ? rawMsg.knowledgeContext : undefined,
     scheduledDeliveryTime: rawMsg.scheduledDeliveryTime,
     deliveredAt: rawMsg.deliveredAt,
+    // 群扇出消息的通用附加字段（extras.senderAgentId 存在 = 群来源）
+    groupName: rawMsg.extras?.groupName ?? undefined,
+    senderAgentId: rawMsg.extras?.senderAgentId ?? undefined,
+    isSystem: rawMsg.extras?.senderAgentId === 'system' ? true : undefined,
   };
 }
 
@@ -295,5 +299,55 @@ export const apiService = {
       throw new Error(detail?.message || `上传失败: ${response.status}`);
     }
     return response.json();
+  },
+
+  // ---- 群聊 API ----
+
+  /** 获取群列表 */
+  async getGroupList(): Promise<{ groups: import('../types').GroupMeta[] }> {
+    return request('/groups');
+  },
+
+  /** 获取群详情 */
+  async getGroupInfo(groupId: string): Promise<import('../types').GroupMeta> {
+    return request(`/groups/${encodeURIComponent(groupId)}`);
+  },
+
+  /** 获取群消息 */
+  async getGroupMessages(groupId: string, params: { limit?: number; offset?: number } = {}): Promise<{ messages: import('../types').GroupMessage[]; hasMore: boolean }> {
+    const q = [`limit=${params.limit ?? 50}`];
+    if (params.offset) q.push(`offset=${params.offset}`);
+    return request(`/groups/${encodeURIComponent(groupId)}/messages?${q.join('&')}`);
+  },
+
+  /** 创建群聊 */
+  async createGroup(name: string, members: string[], reason: string, description?: string): Promise<import('../types').GroupMeta> {
+    return request('/groups', {
+      method: 'POST',
+      body: JSON.stringify({ name, members, reason, description }),
+    });
+  },
+
+  /** 发送群消息 */
+  async sendGroupMessage(groupId: string, text: string): Promise<{ messageId: string }> {
+    return request(`/groups/${encodeURIComponent(groupId)}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    });
+  },
+
+  /** 邀请成员入群 */
+  async inviteToGroup(groupId: string, memberIds: string[], reason: string): Promise<{ ok: boolean; group: import('../types').GroupMeta }> {
+    return request(`/groups/${encodeURIComponent(groupId)}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ memberIds, reason }),
+    });
+  },
+
+  /** 解散群聊 */
+  async dissolveGroup(groupId: string): Promise<{ ok: boolean }> {
+    return request(`/groups/${encodeURIComponent(groupId)}`, {
+      method: 'DELETE',
+    });
   },
 };

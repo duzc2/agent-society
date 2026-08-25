@@ -395,6 +395,13 @@ export class RuntimeLifecycle {
       }
     }
 
+    // 统一发出智能体终止事件，让所有监听者（群聊服务等）自动清理
+    if (runtime._events) {
+      for (const id of agentsToTerminate) {
+        runtime._events.emitAgentTerminated({ agentId: id });
+      }
+    }
+
     /** @type {{ok: boolean, agentId: string, deletedRoles?: string[], failedRoles?: Array<{roleId: string, error: string}>}} */
     const result = { ok: true, agentId: targetId, deletedRoles, failedRoles };
     return result;

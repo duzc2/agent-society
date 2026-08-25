@@ -1,5 +1,6 @@
 import { formatMessageForAgent } from "../utils/message/message_formatter.js";
 import { formatTaskBrief } from "../utils/message/task_brief.js";
+import { registry } from "../core/module_registry.js";
 
 /**
  * RuntimeLlm: LLM 交互模块
@@ -25,6 +26,21 @@ export class RuntimeLlm {
    */
   constructor(runtime) {
     this.runtime = runtime;
+
+    /** @type {Array<[Function, Function]>} 注册的额外消息格式化器（谓词 + 格式化函数），按注册顺序分派 */
+    this._messageFormatters = [];
+
+    // 自提供到 DI：让模块（如群聊服务）在 init 中注册自定义消息格式化器（模式同 runtime_events）
+    registry.provide({ runtimeLlm: this });
+  }
+
+  /**
+   * 注册自定义消息格式化器（通用扩展点，核心不感知消息形态）。
+   * @param {(message: any) => boolean} predicate - 谓词，命中则该格式化器接管
+   * @param {(message: any, getSenderInfo: (id: string) => any) => string | Promise<string>} formatter - 格式化函数
+   */
+  registerMessageFormatter(predicate, formatter) {
+    this._messageFormatters.push([predicate, formatter]);
   }
 
   /**
@@ -452,6 +468,14 @@ export class RuntimeLlm {
     // 非 root 智能体使用新的消息格式化器
     const senderId = message?.from ?? 'unknown';
     const senderInfo = this.getSenderInfo(senderId);
+
+    // 注册式消息格式化器分派（模块通过 registerMessageFormatter 接入，核心不感知具体消息形态）
+    for (const [predicate, formatter] of this._messageFormatters) {
+      if (predicate(message)) {
+        return formatter(message, (id) => this.getSenderInfo(id));
+      }
+    }
+
     let textContent = formatMessageForAgent(message, senderInfo);
 
     // 等待 Promise

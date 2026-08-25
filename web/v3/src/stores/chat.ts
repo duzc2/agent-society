@@ -286,12 +286,24 @@ export const useChatStore = defineStore('chat', () => {
   };
 
   /**
-   * 更新消息内容
+   * 更新消息内容（群消息按投影的 groupId 标记路由到群消息端点）
    */
   const updateMessage = async (agentId: string, messageId: string, content: string) => {
     try {
+      const existing = (chatMessages.value[agentId] || []).find(m => m.id === messageId);
+      if (existing?.groupId) {
+        await apiService.updateGroupMessage(existing.groupId, messageId, content);
+        const list = groupMessages.value[existing.groupId] ?? [];
+        const idx = list.findIndex((m: any) => m.id === messageId);
+        if (idx !== -1) {
+          list[idx].payload = { text: content };
+        }
+        projectGroupMessages(existing.groupId);
+        return;
+      }
+
       await apiService.updateMessage(agentId, messageId, content);
-      
+
       // 更新本地状态
       const messages = chatMessages.value[agentId];
       if (messages) {
@@ -327,12 +339,21 @@ export const useChatStore = defineStore('chat', () => {
   };
 
   /**
-   * 删除单条消息
+   * 删除单条消息（群消息按投影的 groupId 标记路由到群消息端点）
    */
   const deleteMessage = async (agentId: string, messageId: string) => {
     try {
+      const existing = (chatMessages.value[agentId] || []).find(m => m.id === messageId);
+      if (existing?.groupId) {
+        await apiService.deleteGroupMessage(existing.groupId, messageId);
+        groupMessages.value[existing.groupId] = (groupMessages.value[existing.groupId] ?? [])
+          .filter((m: any) => m.id !== messageId);
+        projectGroupMessages(existing.groupId);
+        return;
+      }
+
       await apiService.deleteMessage(agentId, messageId);
-      
+
       // 更新本地状态
       const messages = chatMessages.value[agentId];
       if (messages) {
@@ -348,12 +369,26 @@ export const useChatStore = defineStore('chat', () => {
   };
 
   /**
-   * 批量删除消息
+   * 批量删除消息（群消息批量栏不可达，此为防御分支：全部带 groupId 时走群端点）
    */
   const deleteMessages = async (agentId: string, messageIds: string[]) => {
     try {
+      const targetMessages = (chatMessages.value[agentId] || []).filter(m => messageIds.includes(m.id));
+      const allGroup = targetMessages.length > 0 && targetMessages.every(m => m.groupId);
+      if (allGroup) {
+        const groupId = targetMessages[0].groupId as string;
+        for (const id of messageIds) {
+          await apiService.deleteGroupMessage(groupId, id);
+        }
+        const idsSet = new Set(messageIds);
+        groupMessages.value[groupId] = (groupMessages.value[groupId] ?? [])
+          .filter((m: any) => !idsSet.has(m.id));
+        projectGroupMessages(groupId);
+        return;
+      }
+
       await apiService.deleteMessages(agentId, messageIds);
-      
+
       // 更新本地状态
       const messages = chatMessages.value[agentId];
       if (messages) {
@@ -381,6 +416,100 @@ export const useChatStore = defineStore('chat', () => {
       throw error;
     }
   };
+
+  // ========== 群聊状态 ==========
+  // 群消息投影：GroupMessage → Message，写入 chatMessages[groupId]，
+  // 使 ChatMessageList 零改动直接复用（groupId 与 agentId 均为 UUID，命名空间不冲突）
+  const activeGroupId = ref<string | null>(null);
+  const groupList = ref<Array<any>>([]);
+  const groupMessages = ref<Record<string, any[]>>({});
+  const groupMetaCache = ref<Record<string, any>>({});
+  const groupHasMore = ref<Record<string, boolean>>({});
+  const setActiveGroup = (groupId: string | null) => { activeGroupId.value = groupId; };
+
+  /** GroupMessage → Message 适配（后端只存 from ID，senderName 由渲染层按 ID 解析） */
+  function toChatMessage(gm: any): Message {
+    return {
+      id: gm.id,
+      agentId: gm.groupId,
+      senderId: gm.from || 'system',
+      senderType: gm.from === 'user' ? 'user' : 'agent',
+      content: gm.payload?.text ?? '',
+      timestamp: new Date(gm.createdAt).getTime(),
+      status: 'sent',
+      isSystem: gm.kind === 'group_system',
+      groupId: gm.groupId, // 群消息标记：编辑/删除按此路由到群消息端点
+    };
+  }
+
+  /** 按 createdAt 字典序排序（"YYYY-MM-DD HH:mm:ss" 字典序=时间序） */
+  function sortGroupMessages(messages: any[]): any[] {
+    return [...messages].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  }
+
+  /** 把群消息投影到 chatMessages[groupId]（渲染视图与 store 源同步） */
+  function projectGroupMessages(groupId: string) {
+    chatMessages.value[groupId] = (groupMessages.value[groupId] ?? [])
+      .map(toChatMessage)
+      .sort((a, b) => a.timestamp - b.timestamp);
+  }
+
+  const fetchGroupList = async (orgId?: string) => {
+    try {
+      const { groups } = await apiService.getGroups(orgId);
+      // status 用于前端"活跃/已解散"归档分组
+      groupList.value = groups.map((g: any) => ({ id: g.id, name: g.name, creatorId: g.creatorId, memberCount: g.memberCount, isMember: g.isMember, orgKey: '', members: [], createdAt: '', status: g.status ?? 'active' }));
+    } catch (error) {
+      console.error('[chatStore.fetchGroupList] 获取群列表失败', { orgId, error });
+    }
+  };
+  const fetchGroupMessages = async (groupId: string) => {
+    try {
+      const { messages, hasMore } = await apiService.getGroupMessages(groupId, { limit: 50 });
+      groupMessages.value[groupId] = sortGroupMessages(messages.map((m: any) => ({ ...m, kind: m.kind as 'group' | 'group_system' })));
+      groupHasMore.value[groupId] = hasMore;
+      projectGroupMessages(groupId);
+    } catch (error) {
+      console.error('[chatStore.fetchGroupMessages] 获取群消息失败', { groupId, error });
+    }
+  };
+  const loadMoreGroupMessages = async (groupId: string) => {
+    if (isLoadingMore.value[groupId] || !groupHasMore.value[groupId]) return;
+    isLoadingMore.value[groupId] = true;
+    try {
+      const existing = groupMessages.value[groupId] ?? [];
+      const { messages, hasMore } = await apiService.getGroupMessages(groupId, { limit: 50, offset: existing.length });
+      groupMessages.value[groupId] = sortGroupMessages([...existing, ...messages.map((m: any) => ({ ...m, kind: m.kind as 'group' | 'group_system' }))]);
+      groupHasMore.value[groupId] = hasMore;
+      projectGroupMessages(groupId);
+    } catch (error) {
+      console.error('[chatStore.loadMoreGroupMessages] 加载更多群消息失败', { groupId, error });
+    } finally {
+      isLoadingMore.value[groupId] = false;
+    }
+  };
+  const appendGroupMessage = (message: any) => {
+    const existing = groupMessages.value[message.groupId] || [];
+    if (existing.some((m: any) => m.id === message.id)) return;
+    groupMessages.value[message.groupId] = sortGroupMessages([...existing, message]);
+    projectGroupMessages(message.groupId);
+  };
+
+  /** 发送群消息：调 API + 乐观追加（心跳到达时按 id 去重） */
+  const sendGroupMessageAction = async (groupId: string, text: string) => {
+    const response = await apiService.sendGroupMessage(groupId, text);
+    appendGroupMessage({
+      id: response.messageId,
+      groupId,
+      kind: 'group',
+      from: 'user',
+      payload: { text },
+      // 与后端 createMessage 同格式（"YYYY-MM-DD HH:mm:ss"），保证字典序正确
+      createdAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
+    });
+    return response.messageId;
+  };
+  const updateGroupList = (group: any) => { const idx = groupList.value.findIndex((g: any) => g.id === group.id); if (idx !== -1) groupList.value[idx] = group; else groupList.value.push(group); };
 
   return {
     hasMoreHistory,
@@ -410,6 +539,8 @@ export const useChatStore = defineStore('chat', () => {
     sessionStartTimes,
     pendingScrollMessageId,
     regenerableMessageIds,
-    homeChatOpenTrigger
+    homeChatOpenTrigger,
+    activeGroupId, groupList, groupMessages, groupMetaCache, groupHasMore,
+    setActiveGroup, fetchGroupList, fetchGroupMessages, loadMoreGroupMessages, appendGroupMessage, sendGroupMessageAction, updateGroupList,
   };
 });

@@ -21,6 +21,8 @@ export const useAppStore = defineStore('app', () => {
   // 活动标签页
   const activeTabs = ref<Tab[]>([]);
   const currentTabId = ref('');
+  // 侧边栏标签页：'agents' | 'groups'
+  const activeSidebarTab = ref<'agents' | 'groups'>('agents');
 
   // Actions
   const toggleSidebar = () => {
@@ -126,6 +128,7 @@ export const useAppStore = defineStore('app', () => {
     moodColorsEnabled,
     activeTabs,
     currentTabId,
+    activeSidebarTab,
     toggleSidebar,
     setTheme,
     setChatFontSize,

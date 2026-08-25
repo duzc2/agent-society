@@ -98,6 +98,8 @@ function createMockSociety() {
     onDelayedDelivery() {},
   };
 
+  const agentTools = { groupChatService: null };
+
   return {
     runtime: {
       moduleLoader: { getLoadedModules() { return []; }, getWebComponents() { return []; } },
@@ -112,6 +114,14 @@ function createMockSociety() {
         send() { return { messageId: "msg-mock-1" }; },
         onDelayedDelivery() {},
       },
+      org: {
+        getAgent() { return null; },
+        getRole() { return null; },
+        listRoles() { return []; },
+        listAgents() { return []; }
+      },
+      _toolExecutor: { groupTools: null, agentTools },
+      _events: null,
     },
     onUserMessage() {},
     onAllMessages() {},
@@ -164,7 +174,8 @@ before(async () => {
   const RESET_KEYS = new Set([
     "app", "log", "society", "configService", "llmStatus", "llmLastError",
     "moduleLoader", "toolGroupManager", "logRoot", "heartbeatBroker",
-    "workspacesDir", "dataDir", "runtimeDir", "orgTemplatesSystem", "knowledgeTreeSystem"
+    "workspacesDir", "dataDir", "runtimeDir", "orgTemplatesSystem", "knowledgeTreeSystem",
+    "runtimeEvents", "bus", "org", "runtimeLlm"
   ]);
   for (const key of RESET_KEYS) {
     registry._services.delete(key);
@@ -176,6 +187,37 @@ before(async () => {
     customSkillService: mockCustomSkillService,
     gitSkillService: mockGitSkillService,
     findWorkspaceIdForAgent: () => null,
+    runtimeEvents: {
+      onAgentTerminated() {},
+      onToolCall() {},
+      onError() {},
+      onLlmRetry() {},
+      onComputeStatusChange() {},
+      emitAgentTerminated() {},
+      emitToolCall() {},
+      emitError() {},
+      emitLlmRetry() {},
+      emitComputeStatusChange() {},
+      offAgentTerminated() {},
+      offToolCall() {},
+      offError() {},
+      offLlmRetry() {},
+      offComputeStatusChange() {},
+      getListenerCounts() { return {}; },
+      removeAllListeners() {}
+    },
+    bus: {
+      send() { return { messageId: "mock-msg-id" }; }
+    },
+    runtimeLlm: {
+      registerMessageFormatter() {}
+    },
+    org: {
+      getAgent() { return null; },
+      getRole() { return null; },
+      listRoles() { return []; },
+      listAgents() { return []; }
+    }
   });
 
   // Step 2: 创建 server 并调用 setSociety

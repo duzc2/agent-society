@@ -34,6 +34,7 @@ import { NetworkTools } from "./tools_network.js";
 import { AgentTools } from "./tools_agent.js";
 import { SystemTools } from "./tools_system.js";
 import { SkillTools } from "./tools_skill.js";
+import "./tools_group.js";  // 副作用导入：触发 tools_group.js 的 registry.declare()
 import { ModelTools } from "./tools_model.js";
 import { ToolSchema } from "./tools_schema.js";
 import { getErrorMessage } from "../utils/error_utils.js";
@@ -46,10 +47,11 @@ import { getErrorMessage } from "../utils/error_utils.js";
 export class ToolExecutor {
   /**
    * 创建工具执行器实例
-   * 
+   *
    * @param {object} runtime - Runtime 实例引用
+   * @param {object} [groupTools] - 群聊工具实例（由 DI 注入，在 registry.ensureReady 后设置）
    */
-  constructor(runtime) {
+  constructor(runtime, groupTools) {
     /** @type {object} Runtime 实例引用 */
     this.runtime = runtime;
     /** @type {FileTools} 文件操作工具 */
@@ -65,6 +67,8 @@ export class ToolExecutor {
     /** @type {ModelTools} 模型能力工具 */
     this.modelTools = new ModelTools(runtime);
     this.toolSchema = new ToolSchema(runtime, this.modelTools);
+    /** @type {import('./tools_group.js').GroupTools|null} 群聊工具（DI 注入） */
+    this.groupTools = groupTools || null;
   }
 
   /**
@@ -242,6 +246,23 @@ export class ToolExecutor {
           return this.agentTools._executeListToolGroups(ctx);
         case "update_my_tool_groups":
           return await this.agentTools._executeUpdateMyToolGroups(ctx, args);
+        // ===================================================================
+        // 群聊工具（通过 DI 注入的 groupTools）
+        // ===================================================================
+        case "create_group":
+          return this.groupTools.createGroup(ctx, args);
+        case "send_group_message":
+          return this.groupTools.sendGroupMessage(ctx, args);
+        case "invite_to_group":
+          return this.groupTools.inviteToGroup(ctx, args);
+        case "leave_group":
+          return this.groupTools.leaveGroup(ctx, args);
+        case "dissolve_group":
+          return this.groupTools.dissolveGroup(ctx, args);
+        case "get_group_info":
+          return this.groupTools.getGroupInfo(ctx, args);
+        case "list_my_groups":
+          return this.groupTools.listMyGroups(ctx);
         default:
           void runtime.log.warn("未知工具调用", {
             // 业务信息：哪个 agent 调用了什么未知工具，传了什么参数

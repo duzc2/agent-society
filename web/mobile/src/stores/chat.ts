@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import type { Message } from '../types';
+import type { Message, GroupMeta, GroupMessage } from '../types';
 import { apiService } from '../services/api';
 
 /**
@@ -39,6 +39,7 @@ export const useChatStore = defineStore('chat', () => {
   /** 设置首屏消息（全量替换，用于心跳批量首次加载） */
   function setMessages(agentId: string, messages: Message[]) {
     chatMessages.value[agentId] = [...messages].sort((a, b) => a.timestamp - b.timestamp);
+    hasMoreHistory.value[agentId] = true;
   }
 
   /** 追加增量消息（按 id 去重），用于心跳 agent_message 增量推送。同 id 消息已存在时合并更新（工具调用卡片收到执行结果时走这里） */
@@ -211,6 +212,73 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+
+  // ========== 群聊状态 ==========
+
+  const groupList = ref<GroupMeta[]>([]);
+  const groupMessages = ref<Record<string, GroupMessage[]>>({});
+  const groupMetaCache = ref<Record<string, GroupMeta>>({});
+  const groupLoading = ref(false);
+  const groupHasMore = ref<Record<string, boolean>>({});
+  const groupLoadingMore = ref<Record<string, boolean>>({});
+
+  /** 按 createdAt 升序排列（后端格式 "YYYY-MM-DD HH:mm:ss"，字典序即时间序） */
+  function sortGroupMessages(messages: GroupMessage[]): GroupMessage[] {
+    return [...messages].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async function fetchGroupList() {
+    try {
+      const data = await apiService.getGroupList();
+      groupList.value = data.groups || [];
+    } catch (e) {
+      console.error('获取群列表失败', e);
+    }
+  }
+
+  async function fetchGroupMessages(groupId: string) {
+    groupLoading.value = true;
+    try {
+      const data = await apiService.getGroupMessages(groupId, { limit: 50 });
+      groupMessages.value[groupId] = sortGroupMessages(data.messages || []);
+      groupHasMore.value[groupId] = data.hasMore;
+    } catch (e) {
+      console.error('获取群消息失败', e);
+    } finally {
+      groupLoading.value = false;
+    }
+  }
+
+  async function loadMoreGroupMessages(groupId: string) {
+    if (groupLoadingMore.value[groupId] || !groupHasMore.value[groupId]) return;
+    groupLoadingMore.value[groupId] = true;
+    try {
+      const existing = groupMessages.value[groupId] || [];
+      const data = await apiService.getGroupMessages(groupId, { limit: 50, offset: existing.length });
+      groupMessages.value[groupId] = sortGroupMessages([...existing, ...(data.messages || [])]);
+      groupHasMore.value[groupId] = data.hasMore;
+    } catch (e) {
+      console.error('加载更多群消息失败', e);
+    } finally {
+      groupLoadingMore.value[groupId] = false;
+    }
+  }
+
+  function appendGroupMessage(msg: GroupMessage) {
+    const existing = groupMessages.value[msg.groupId] || [];
+    if (existing.some(m => m.id === msg.id)) return;
+    groupMessages.value[msg.groupId] = sortGroupMessages([...existing, msg]);
+  }
+
+  function updateGroupList(group: GroupMeta) {
+    const idx = groupList.value.findIndex(g => g.id === group.id);
+    if (idx !== -1) {
+      groupList.value[idx] = group;
+    } else {
+      groupList.value.push(group);
+    }
+  }
+
   return {
     chatMessages,
     loading,
@@ -230,6 +298,17 @@ export const useChatStore = defineStore('chat', () => {
     sendMessage,
     getSessionMessages,
     rootNewSession,
-    clearAgentMessages
+    clearAgentMessages,
+    groupList,
+    groupMessages,
+    groupMetaCache,
+    groupLoading,
+    groupHasMore,
+    groupLoadingMore,
+    fetchGroupList,
+    fetchGroupMessages,
+    loadMoreGroupMessages,
+    appendGroupMessage,
+    updateGroupList,
   };
 });

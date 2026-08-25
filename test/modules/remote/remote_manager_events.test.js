@@ -266,6 +266,37 @@ describe("Remote → localcmd 桥接（localcmd_spawn 统一进程管理）", ()
     assert.strictEqual(list.items[0].status, "killed", "删映射后该 agent 的远程进程应被终止");
   });
 
+  it("修改绑定账号 → 旧连接关闭，下次访问用新账号重连（同配置则复用连接）", async () => {
+    // 第一次访问：建立连接
+    const spawnRes = await callTool("agent-1", "localcmd_spawn", { command: "uname" });
+    assert.strictEqual(spawnRes.ok, true);
+    assert.strictEqual(MockClient.instances.length, 1, "第一次访问应建立一个连接");
+
+    // 相同配置再访问：复用连接，不新建
+    const spawnRes2 = await callTool("agent-1", "localcmd_spawn", { command: "uname" });
+    assert.strictEqual(spawnRes2.ok, true);
+    assert.strictEqual(MockClient.instances.length, 1, "相同配置应复用连接");
+    assert.strictEqual(MockClient.instances[0]._closed, false);
+
+    // 修改绑定账号（真实 POST /mappings 路径）
+    const CONF_B = { host: "10.0.0.8", port: 22, username: "newuser", password: "newpass", enabled: true };
+    const handler = remoteModule.getHttpHandler();
+    const saveRes = await handler(
+      { method: "POST", url: "/api/modules/remote/mappings" },
+      null,
+      ["mappings"],
+      { agentId: "agent-1", config: CONF_B }
+    );
+    assert.strictEqual(saveRes.ok, true);
+    assert.strictEqual(MockClient.instances[0]._closed, true, "保存新配置后旧连接应立即关闭");
+
+    // 下次访问 → 用新账号建立新连接
+    const spawnRes3 = await callTool("agent-1", "localcmd_spawn", { command: "uname" });
+    assert.strictEqual(spawnRes3.ok, true);
+    assert.strictEqual(MockClient.instances.length, 2, "配置变化后应建立新连接");
+    assert.strictEqual(MockClient.instances[1].streams.length, 1, "新连接应承载新命令的 channel");
+  });
+
   it("localcmd 未加载 → spawn 返回 localcmd_unavailable，不崩溃", async () => {
     mockRuntime.moduleLoader = { getModule: () => null };
 

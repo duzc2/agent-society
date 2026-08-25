@@ -76,11 +76,15 @@ export interface Message {
   scheduledDeliveryTime?: string; // 预计送达时间（ISO 字符串）
   deliveredAt?: string; // 实际投递时间
   sendTime?: string; // 原始发送时间（接收方视角）
+  isSystem?: boolean; // 群系统消息标记（居中灰色胶囊渲染）
+  groupId?: string; // 群消息标记（store 编辑/删除按此路由到群消息端点）
+  groupName?: string; // 群来源消息的群名（个人视图显示"群聊 X"）
+  senderAgentId?: string; // 群来源消息的原发送者（'system' = 群系统通知）
 }
 
 export interface Tab {
   id: string;
-  type: 'org' | 'tool';
+  type: 'org' | 'tool' | 'group';
   title: string;
   params?: any;
 }
@@ -116,4 +120,41 @@ export interface TodoItem {
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
   createdAt: string;
   updatedAt: string;
+}
+
+// ========== 群聊相关类型 ==========
+
+/** 群元数据 */
+export interface GroupMeta {
+  id: string;
+  name: string;
+  description?: string;
+  orgKey: string;
+  creatorId: string;
+  /** 群成员（后端 getGroupInfo 返回对象数组：id/name/status） */
+  members: Array<{ id: string; name: string; status: string }>;
+  createdAt: string;
+  /** 是否已解散 */
+  dissolved?: boolean;
+}
+
+/** 群聊摘要（轻量，用于 get_org_structure 和群列表） */
+export interface GroupSummary {
+  id: string;
+  name: string;
+  creatorId: string;
+  memberCount: number;
+  /** 当前调用者是否在群中 */
+  isMember: boolean;
+}
+
+/** 群聊消息 */
+export interface GroupMessage {
+  id: string;
+  groupId: string;
+  kind: 'group' | 'group_system';
+  from: string;          // 发送者 agentId（system 消息为空）
+  taskId?: string;       // 关联任务（后端返回）
+  payload: { text: string };
+  createdAt: string;
 }

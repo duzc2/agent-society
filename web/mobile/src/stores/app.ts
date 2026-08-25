@@ -52,6 +52,9 @@ export const useAppStore = defineStore('app', () => {
   // 当前选中的组织 ID（进入聊天时设置）
   const currentOrgId = ref<string | null>(null);
 
+  // 当前选中的群 ID
+  const currentGroupId = ref<string | null>(null);
+
   // 聊天字体大小
   const chatFontSize = ref(16);
 
@@ -89,12 +92,19 @@ export const useAppStore = defineStore('app', () => {
 
   function navigateTo(page: PageName, orgId?: string | null) {
     currentPage.value = page;
+    // 任何常规导航都退出群聊模式；进入群聊走 navigateToGroupChat
+    currentGroupId.value = null;
     if (orgId !== undefined) {
       currentOrgId.value = orgId;
     }
     if (page === 'orgs' || page === 'chat' || page === 'settings') {
       pageStack.value = [];
     }
+  }
+
+  function navigateToGroupChat(groupId: string) {
+    currentGroupId.value = groupId;
+    currentPage.value = 'chat';
   }
 
   function navigateToAgentProps(agentId: string) {
@@ -194,6 +204,7 @@ export const useAppStore = defineStore('app', () => {
     theme,
     currentPage,
     currentOrgId,
+    currentGroupId,
     chatFontSize,
     moodColorsEnabled,
     fileViewer,
@@ -205,6 +216,7 @@ export const useAppStore = defineStore('app', () => {
     errorMessage,
     setTheme,
     navigateTo,
+    navigateToGroupChat,
     navigateToAgentProps,
     navigateToRoleProps,
     goBack,

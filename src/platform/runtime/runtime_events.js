@@ -16,6 +16,7 @@
  * - error: 错误事件（用于向前端广播）
  * - llmRetry: LLM 重试事件
  * - computeStatusChange: 运算状态变更事件
+ * - agentTerminated: 智能体终止事件
  */
 
 import { formatLocalTime } from "../utils/logger/logger.js";
@@ -45,6 +46,9 @@ export class RuntimeEvents {
     
     // 运算状态变更事件监听器
     this._computeStatusListeners = new Set();
+
+    // 智能体终止事件监听器
+    this._agentTerminatedListeners = new Set();
   }
 
   // ==================== 工具调用事件 ====================
@@ -230,6 +234,43 @@ export class RuntimeEvents {
     this._computeStatusListeners.delete(listener);
   }
 
+  // ==================== 智能体终止事件 ====================
+
+  /**
+   * 注册智能体终止事件监听器
+   * @param {(event: {agentId: string}) => void} listener
+   */
+  onAgentTerminated(listener) {
+    if (typeof listener === "function") {
+      this._agentTerminatedListeners.add(listener);
+    }
+  }
+
+  /**
+   * 触发智能体终止事件
+   * @param {{agentId: string}} event
+   */
+  emitAgentTerminated(event) {
+    for (const listener of this._agentTerminatedListeners) {
+      try {
+        listener(event);
+      } catch (err) {
+        void this.log.warn("智能体终止事件监听器执行失败", {
+          agentId: event.agentId,
+          error: err?.message ?? String(err)
+        });
+      }
+    }
+  }
+
+  /**
+   * 移除智能体终止事件监听器
+   * @param {Function} listener
+   */
+  offAgentTerminated(listener) {
+    this._agentTerminatedListeners.delete(listener);
+  }
+
   // ==================== 工具方法 ====================
 
   /**
@@ -241,7 +282,8 @@ export class RuntimeEvents {
       toolCall: this._toolCallListeners.size,
       error: this._errorListeners.size,
       llmRetry: this._llmRetryListeners.size,
-      computeStatusChange: this._computeStatusListeners.size
+      computeStatusChange: this._computeStatusListeners.size,
+      agentTerminated: this._agentTerminatedListeners.size
     };
   }
 
@@ -253,6 +295,7 @@ export class RuntimeEvents {
     this._errorListeners.clear();
     this._llmRetryListeners.clear();
     this._computeStatusListeners.clear();
+    this._agentTerminatedListeners.clear();
   }
 }
 

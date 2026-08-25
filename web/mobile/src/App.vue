@@ -115,6 +115,43 @@ onMounted(async () => {
       agentStore.updateMoodColors(agentId, colors);
     }
   });
+  // 群聊心跳事件
+  heartbeatService.onMessage('group_message', (msg) => {
+    const data = msg.payload as any;
+    if (data?.groupId && data?.message) {
+      chatStore.appendGroupMessage({
+        id: data.message.id,
+        groupId: data.groupId,
+        kind: data.message.kind || 'group',
+        from: data.message.from || '',
+        payload: data.message.payload || { text: '' },
+        createdAt: data.message.createdAt || new Date().toISOString(),
+      });
+    }
+  });
+  heartbeatService.onMessage('group_event', (msg) => {
+    const data = msg.payload as any;
+    if (data?.action === 'group_created' || data?.action === 'group_updated') {
+      chatStore.fetchGroupList();
+      // 当前打开的群：刷新成员信息与消息（邀请/退出/编辑/删除后即时同步）
+      if (appStore.currentGroupId && data.groupId === appStore.currentGroupId) {
+        apiService.getGroupInfo(data.groupId).then(info => {
+          chatStore.groupMetaCache[data.groupId] = info;
+        }).catch(err => console.error('[App] 刷新群信息失败', err));
+        chatStore.fetchGroupMessages(data.groupId);
+      }
+    } else if (data?.action === 'group_dissolved') {
+      // 解散的群保留在列表（归档分类），可随时查阅历史；正在看该群的用户不被踢出
+      if (data.group) {
+        chatStore.updateGroupList(data.group);
+        if (chatStore.groupMetaCache[data.groupId]) {
+          chatStore.groupMetaCache[data.groupId].status = 'archived';
+        } else {
+          chatStore.groupMetaCache[data.groupId] = data.group;
+        }
+      }
+    }
+  });
   errorNotificationService.init();
   heartbeatService.start();
 });

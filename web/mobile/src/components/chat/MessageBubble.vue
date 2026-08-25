@@ -125,7 +125,19 @@ async function openFile(file: { name: string; path: string; mimeType: string }) 
 </script>
 
 <template>
+  <!-- 系统消息（居中灰色文本） -->
   <div
+    v-if="message.isSystem"
+    :id="'msg-' + message.id"
+    class="flex justify-center py-1"
+  >
+    <span class="text-xs text-[var(--text-3)] bg-[var(--surface-2)] px-3 py-1 rounded-full">
+      {{ message.content }}
+    </span>
+  </div>
+
+  <div
+    v-else
     :id="'msg-' + message.id"
     class="flex gap-2 animate-fade-in-up"
     :class="isUser ? 'flex-row-reverse' : 'flex-row'"
@@ -154,6 +166,19 @@ async function openFile(file: { name: string; path: string; mimeType: string }) 
         ? 'bg-[var(--primary)] text-white rounded-br-md'
         : 'bg-[var(--surface-1)] text-[var(--text-1)] border border-[var(--border)] rounded-bl-md'"
     >
+      <!-- 发送者名称（群聊消息中区分发言智能体） -->
+      <div v-if="!isUser && message.senderName" class="text-xs text-[var(--text-3)] mb-0.5">
+        {{ message.senderName }}
+      </div>
+
+      <!-- 群来源消息标记（个人视图中来自群聊的消息） -->
+      <div
+        v-if="message.senderAgentId && message.senderAgentId !== 'system'"
+        class="text-[10px] text-[var(--text-3)] mb-0.5"
+      >
+        来自群聊 {{ message.groupName || '' }}
+      </div>
+
       <!-- 工具调用标记 -->
       <div v-if="isTool && message.toolCall" class="flex items-center gap-1 mb-1 text-xs opacity-70">
         <Wrench class="w-3 h-3" />

@@ -248,7 +248,7 @@ this._dataDir = options.dataDir ?? null;
 
 ## web构建方法
 
-前端页面是与服务器分离的，在 web/v3 文件夹中。通过在 web/v3 里执行 npm run build 来构建。
+前端页面是与服务器分离的，并有PC端和移动端两个版本。在 执行 node .\scripts\build-web.mjs 来同时构建 web\v3 和 web\mobile。
 
 # 工程纪律
 

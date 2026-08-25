@@ -277,7 +277,8 @@ async function registerMessageRoutes({ app, log, society, runtimeDir }) {
     }
     messagesById.set(message.id, message);
     const { from, to } = message;
-    if (from) { if (!messagesByAgent.has(from)) messagesByAgent.set(from, []); messagesByAgent.get(from).push(message); await appendMessageToFile(from, message); }
+    // skipSenderCopy：通用投递选项（发送者不保留个人副本；群消息等由扇出 to 副本覆盖）
+    if (from && !message.extras?.skipSenderCopy) { if (!messagesByAgent.has(from)) messagesByAgent.set(from, []); messagesByAgent.get(from).push(message); await appendMessageToFile(from, message); }
     if (to && to !== from && !message.scheduledDeliveryTime) { if (!messagesByAgent.has(to)) messagesByAgent.set(to, []); messagesByAgent.get(to).push(message); await appendMessageToFile(to, message); }
   }
 
@@ -296,6 +297,7 @@ async function registerMessageRoutes({ app, log, society, runtimeDir }) {
       payload: m.payload,
       reasoning_content: m.reasoning_content ?? null,
       createdAt: m.createdAt,
+      extras: m.extras ?? null,
     };
   }
 
@@ -400,7 +402,7 @@ async function registerMessageRoutes({ app, log, society, runtimeDir }) {
       const originalSend = society.runtime.bus.send.bind(society.runtime.bus);
       society.runtime.bus.send = (msg) => {
         const result = originalSend(msg);
-        void storeMessage({ id: result.messageId, from: msg.from, to: msg.to, taskId: msg.taskId, payload: msg.payload, reasoning_content: msg.reasoning_content ?? null, memoryContext: msg.memoryContext ?? null, knowledgeContext: msg.knowledgeContext ?? null, createdAt: formatLocalTime(), scheduledDeliveryTime: result.scheduledDeliveryTime ?? null });
+        void storeMessage({ id: result.messageId, from: msg.from, to: msg.to, taskId: msg.taskId, payload: msg.payload, reasoning_content: msg.reasoning_content ?? null, memoryContext: msg.memoryContext ?? null, knowledgeContext: msg.knowledgeContext ?? null, createdAt: formatLocalTime(), scheduledDeliveryTime: result.scheduledDeliveryTime ?? null, extras: msg.extras ?? null });
         return result;
       };
       society.runtime.bus.onDelayedDelivery((message) => {
@@ -424,7 +426,7 @@ async function registerMessageRoutes({ app, log, society, runtimeDir }) {
           const newMsgs = [];
           for (const m of msgs) {
             if ((m.createdAt ? new Date(m.createdAt).getTime() : 0) > _lastBroadcastAt) {
-              newMsgs.push({ id: m.id, from: m.from, to: m.to, taskId: m.taskId, type: m.type ?? (m.payload?.type || 'text'), payload: m.payload, reasoning_content: m.reasoning_content ?? null, memoryContext: m.memoryContext ?? null, knowledgeContext: m.knowledgeContext ?? null, createdAt: m.createdAt, scheduledDeliveryTime: m.scheduledDeliveryTime ?? null, deliveredAt: m.deliveredAt ?? null });
+              newMsgs.push({ id: m.id, from: m.from, to: m.to, taskId: m.taskId, type: m.type ?? (m.payload?.type || 'text'), payload: m.payload, reasoning_content: m.reasoning_content ?? null, memoryContext: m.memoryContext ?? null, knowledgeContext: m.knowledgeContext ?? null, createdAt: m.createdAt, scheduledDeliveryTime: m.scheduledDeliveryTime ?? null, deliveredAt: m.deliveredAt ?? null, extras: m.extras ?? null });
             }
           }
           if (newMsgs.length > 0) { agentsMsgs[agentId] = newMsgs; hasNew = true; }

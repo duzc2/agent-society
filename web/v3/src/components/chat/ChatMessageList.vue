@@ -29,6 +29,8 @@ const props = defineProps<{
   // 智能体是否正在运算（非 idle），用于显示思考占位
   isThinking?: boolean;
   thinkingPhase?: string | null;
+  // 点发送者名导航回调（群会话注入：user 短路 + 智能体跳个人对话）
+  onNavigateSender?: (agentId: string, messageId: string) => void;
 }>();
 
 const emit = defineEmits<{
@@ -335,6 +337,8 @@ const currentMessages = computed(() => {
 
 const getSenderName = (msg: any) => {
   if (msg.senderType === 'user') return '我';
+  // 群来源消息（extras.senderAgentId 存在）：发送者为群身份，显示"群聊 X"
+  if (msg.senderAgentId) return '群聊 ' + (msg.groupName || msg.senderId);
   const agent = findAgentById(msg.senderId);
   return agent ? agent.name : msg.senderId;
 };
@@ -383,6 +387,12 @@ const findAgentById = (id: string) => {
  * 跳转到指定智能体的对话位置
  */
 const navigateToMessage = (agentId: string, messageId: string) => {
+  // 注入导航回调（群会话）：由回调决定行为（user 短路 + 智能体跳个人对话）
+  if (props.onNavigateSender) {
+    props.onNavigateSender(agentId, messageId);
+    return;
+  }
+
   let targetOrgId = '';
   let targetAgentId = agentId;
 
@@ -867,9 +877,16 @@ const executeDeleteOne = async () => {
     </div>
 
     <template v-for="item in currentMessages" :key="item.id">
+      <!-- 群系统消息（居中灰色胶囊） -->
+      <div v-if="item.isSystem" class="flex justify-center py-1.5">
+        <span class="text-xs text-[var(--text-3)] bg-[var(--surface-3)] px-3 py-1 rounded-full">
+          {{ item.content }}
+        </span>
+      </div>
+
       <!-- 普通消息 -->
-      <div 
-        v-if="item.type !== 'tool-group'"
+      <div
+        v-else-if="item.type !== 'tool-group'"
         :id="'msg-' + item.id"
         class="flex group relative pl-8 pr-2 transition-colors duration-200 rounded-lg hover:bg-[var(--surface-2)]/50"
         :class="item.senderType === 'user' ? 'justify-end' : 'justify-start'"
@@ -904,12 +921,18 @@ const executeDeleteOne = async () => {
           <div class="flex flex-col min-w-0" :class="item.senderType === 'user' ? 'items-end' : 'items-start'">
             <div class="flex items-center space-x-2 mb-1 px-1">
               <div class="flex items-center space-x-1 text-[10px] font-bold text-[var(--text-3)] uppercase tracking-wider">
-                <span 
+                <span
                   class="hover:text-[var(--primary)] cursor-pointer transition-colors"
                   @click="navigateToMessage(item.senderId, item.id)"
                   @mouseenter="handleMouseEnter($event, item.senderId)"
                   @mouseleave="handleMouseLeave"
                 >{{ getSenderName(item) }}</span>
+                <span
+                  v-if="item.senderAgentId && item.senderAgentId !== 'system'"
+                  class="text-[10px] font-normal text-[var(--text-3)] normal-case tracking-normal"
+                >
+                  由 {{ findAgentById(item.senderAgentId)?.name || item.senderAgentId }} 发送
+                </span>
                 <template v-if="getReceiverName(item)">
                   <span class="opacity-50 mx-1">→</span>
                   <span 

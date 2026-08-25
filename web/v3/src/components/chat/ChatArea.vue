@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Send, Bot, Sparkles, ArrowDown, User, Search, MoreVertical, Loader2, X, Trash2, FileText, CheckSquare, Eraser, SlidersHorizontal, Lightbulb, Download, Repeat, History } from 'lucide-vue-next';
+import { Send, Bot, Sparkles, ArrowDown, User, Users, Search, MoreVertical, Loader2, X, Trash2, FileText, CheckSquare, Eraser, SlidersHorizontal, Lightbulb, Download, Repeat, History } from 'lucide-vue-next';
 import MoodGrid from '../common/MoodGrid.vue';
 import Button from 'primevue/button';
 import Textarea from 'primevue/textarea';
@@ -20,11 +20,14 @@ import { useChatExport } from './useChatExport';
 import { openAgentFilesDialog, refreshAgentFiles } from './agentFilesDialog';
 import { openAgentCommandsDialog } from './agentCommandsDialog';
 import { isMoodDark } from '../../utils/moodColors';
+import { type ChatSessionAdapter } from './chatSession';
 
 
 const props = defineProps<{
   orgId: string;
   tabTitle: string;
+  /** 注入的会话适配器（群标签页传入）；不传 = 内置默认智能体会话 */
+  session?: ChatSessionAdapter;
 }>();
 
 const chatStore = useChatStore();
@@ -33,8 +36,8 @@ const appStore = useAppStore();
 const toast = useToast();
 const dialog = useDialog();
 
-// 当前正在对话的智能体 ID
-const activeAgentId = computed(() => chatStore.getActiveAgentId(props.orgId));
+// 当前会话 ID（注入会话适配器时使用其 id，如群 ID；否则为当前选中的智能体）
+const activeAgentId = computed(() => props.session?.id ?? chatStore.getActiveAgentId(props.orgId));
 
 // 当前对话的智能体信息
 const activeAgent = computed(() => {
@@ -147,6 +150,39 @@ const thinkingPhase = computed(() => {
   return chatTarget.value?.computePhase || null;
 });
 
+// 内置默认智能体会话适配器（不传 session 时使用；行为与历史实现一致）
+const agentSession = computed<ChatSessionAdapter>(() => ({
+  id: activeAgentId.value,
+  icon: activeAgent.value?.id === 'user' ? 'user' : 'agent',
+  title: activeAgent.value?.name || props.tabTitle,
+  subtitle: activeAgent.value?.role || '智能体',
+  placeholder: placeholder.value,
+  emptyTitle: `开始在 ${props.tabTitle} 协作`,
+  emptySubtitle: '选择一个智能体或直接发送指令',
+  loadInitial: loadMessages,
+  loadMore: () => {
+    // 上下文模式（历史跳转）下不自动加载
+    if (chatStore.isContextMode[activeAgentId.value]) return Promise.resolve();
+    return chatStore.loadMoreMessages(activeAgentId.value);
+  },
+  hasMore: () => !!chatStore.hasMoreHistory[activeAgentId.value],
+  isLoadingMore: () => !!chatStore.isLoadingMore[activeAgentId.value],
+  send: sendToAgent,
+  canSend: true,
+  regenerationAgentId: regenerationAgentId.value,
+  isThinking: () => isAgentProcessing.value,
+  thinkingPhase: () => thinkingPhase.value,
+  showAutoReply: true,
+  showSearch: true,
+  showSuggestions: true,
+  canClearHistory: true,
+  loadAutoReplyConfig,
+  onMessagesChanged: () => refreshAgentFiles(activeAgentId.value),
+}));
+
+// 生效的会话适配器
+const session = computed<ChatSessionAdapter>(() => props.session ?? agentSession.value);
+
 // 推荐回复建议状态（按智能体隔离）
 const suggestionsEnabledByAgent = ref<Record<string, boolean>>({});
 const suggestionsByAgent = ref<Record<string, string[]>>({});
@@ -227,7 +263,7 @@ const moreMenuItems = computed(() => [
     label: '清空聊天记录',
     icon: 'eraser',
     command: () => openClearHistoryConfirm(),
-    disabled: !activeAgent.value || (chatStore.chatMessages[activeAgentId.value] || []).length === 0
+    disabled: !activeAgent.value || !session.value.canClearHistory || (chatStore.chatMessages[activeAgentId.value] || []).length === 0
   },
   {
     label: '删除智能体',
@@ -248,16 +284,14 @@ const handleScroll = async () => {
   const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
   showScrollBottomButton.value = distanceFromBottom > SCROLL_THRESHOLD;
 
-  // 2. 检查顶部无限滚动加载
-  // 只有在非上下文模式（正常浏览模式）下才自动加载历史
+  // 2. 检查顶部无限滚动加载（会话适配器提供加载逻辑与守卫）
   if (
     scrollTop < 50 &&
-    !chatStore.isLoadingMore[activeAgentId.value] &&
-    chatStore.hasMoreHistory[activeAgentId.value] &&
-    !chatStore.isContextMode[activeAgentId.value]
+    !session.value.isLoadingMore() &&
+    session.value.hasMore()
   ) {
     const oldScrollHeight = scrollHeight;
-    await chatStore.loadMoreMessages(activeAgentId.value);
+    await session.value.loadMore();
 
     // 恢复滚动位置
     nextTick(() => {
@@ -314,6 +348,7 @@ const scrollToMessage = (messageId: string) => {
  * 这里复用现有的 fetchMessages 接口，不新增前端轮询通道。
  */
 const loadRegenerationMetadata = async () => {
+  if (props.session) return; // 注入会话（如群）不加载智能体重新生成元数据
   if (!regenerationAgentId.value) {
     return;
   }
@@ -335,8 +370,8 @@ const loadMessages = async () => {
 };
 
 onMounted(async () => {
-  await loadMessages();
-  loadAutoReplyConfig();
+  await session.value.loadInitial();
+  session.value.loadAutoReplyConfig?.();
   if (messageContainer.value) {
     messageContainer.value.addEventListener('scroll', handleScroll);
   }
@@ -352,12 +387,12 @@ onUnmounted(() => {
 
 // 监听 activeAgentId 的变化，重新加载消息
 watch(activeAgentId, async () => {
-  await loadMessages();
+  await session.value.loadInitial();
   if (!chatStore.pendingScrollMessageId) {
     scrollToBottom(true);
   }
-  // 切换智能体时加载自动回复配置
-  loadAutoReplyConfig();
+  // 切换会话时加载自动回复配置（仅支持自动回复的会话）
+  session.value.loadAutoReplyConfig?.();
 });
 
 // 监听最后一条消息：当智能体回复后，重新生成建议
@@ -366,6 +401,7 @@ watch(() => {
   return msgs?.[msgs.length - 1];
 }, (newMsg, oldMsg) => {
   if (
+    session.value.showSuggestions &&
     isSuggestionsEnabled.value &&
     newMsg &&
     newMsg.id !== oldMsg?.id &&
@@ -373,15 +409,15 @@ watch(() => {
   ) {
     void loadSuggestions();
   }
-  // 智能体回复后自动刷新"所有文件"对话框（如果已打开）
+  // 消息变化副作用（默认智能体会话：智能体回复后刷新"所有文件"对话框）
   if (newMsg && newMsg.id !== oldMsg?.id && newMsg.senderType === 'agent') {
-    refreshAgentFiles(activeAgentId.value);
+    session.value.onMessagesChanged?.();
   }
 });
 
 // 监听 orgId 变化
 watch(() => props.orgId, async () => {
-  await loadMessages();
+  await session.value.loadInitial();
   if (!chatStore.pendingScrollMessageId) {
     scrollToBottom(true);
   }
@@ -469,7 +505,18 @@ const handleKeydown = (e: KeyboardEvent) => {
 };
 
 /**
- * 发送当前输入框中的消息。
+ * 发送给当前智能体会话（默认适配器的 send 实现）。
+ */
+const sendToAgent = async (text: string) => {
+  const targetId = chatTarget.value?.id;
+  if (!targetId) {
+    throw new Error('无法确定消息目标智能体');
+  }
+  await chatStore.sendMessage(targetId, text, activeAgentId.value);
+};
+
+/**
+ * 发送当前输入框中的消息（会话适配器决定实际发送行为）。
  * 发送完成后重新计算输入框高度，保证清空内容后恢复到单行。
  */
 const sendMessage = async () => {
@@ -480,12 +527,7 @@ const sendMessage = async () => {
   isSending.value = true;
 
   try {
-    const targetId = chatTarget.value?.id;
-    if (!targetId) {
-      console.warn('无法确定消息目标智能体');
-      return;
-    }
-    await chatStore.sendMessage(targetId, text, activeAgentId.value);
+    await session.value.send(text);
   } catch (error: any) {
     console.error('发送失败:', error);
     // 如果发送失败，把消息弹回来。
@@ -663,9 +705,10 @@ const saveAutoReplyConfig = () => {
 };
 
 /**
- * 切换自动回复面板。
+ * 切换自动回复面板（仅支持自动回复的会话）。
  */
 const toggleAutoReply = () => {
+  if (!session.value.showAutoReply) return;
   isAutoReplyPanelOpen.value = !isAutoReplyPanelOpen.value;
   if (isAutoReplyPanelOpen.value) {
     loadAutoReplyConfig();
@@ -885,27 +928,29 @@ const handleClearHistory = async () => {
       <div class="flex items-center space-x-3 min-w-0">
         <div class="shrink-0">
           <div class="relative w-11 h-11 rounded-full overflow-hidden flex items-center justify-center"
-               :class="activeAgent?.id === 'user' ? 'bg-[var(--primary-weak)]' : ''">
+               :class="session.icon === 'user' || session.icon === 'group' ? 'bg-[var(--primary-weak)]' : ''">
             <MoodGrid
-              v-if="activeAgent?.id !== 'user' && (agentStore.moodColorsMap[activeAgent?.id ?? '']?.length ?? 0) > 0 && appStore.moodColorsEnabled"
-              :mood-colors="agentStore.moodColorsMap[activeAgent?.id ?? '']"
+              v-if="session.icon === 'agent' && (agentStore.moodColorsMap[activeAgentId]?.length ?? 0) > 0 && appStore.moodColorsEnabled"
+              :mood-colors="agentStore.moodColorsMap[activeAgentId]"
               :enabled="appStore.moodColorsEnabled"
               class="absolute inset-0"
             />
-            <User v-if="activeAgent?.id === 'user'" class="relative z-10 w-5 h-5 text-[var(--primary)]" />
-            <Bot v-else class="relative z-10 w-5 h-5" :class="isMoodDark(agentStore.moodColorsMap[activeAgent?.id ?? '']) ? 'text-white' : 'text-[var(--primary)]'" />
+            <User v-if="session.icon === 'user'" class="relative z-10 w-5 h-5 text-[var(--primary)]" />
+            <Users v-else-if="session.icon === 'group'" class="relative z-10 w-5 h-5 text-[var(--primary)]" />
+            <Bot v-else class="relative z-10 w-5 h-5" :class="isMoodDark(agentStore.moodColorsMap[activeAgentId]) ? 'text-white' : 'text-[var(--primary)]'" />
           </div>
         </div>
         <div class="min-w-0">
-          <h2 class="font-bold text-[var(--text-1)] truncate">{{ activeAgent?.name || tabTitle }}</h2>
+          <h2 class="font-bold text-[var(--text-1)] truncate">{{ session.title }}</h2>
           <div class="flex items-center text-xs text-[var(--text-3)]">
-            <span class="inline-block w-2 h-2 rounded-full bg-green-500 mr-2"></span>
-            <span class="truncate">{{ activeAgent?.role || '智能体' }}</span>
+            <span v-if="session.icon === 'agent'" class="inline-block w-2 h-2 rounded-full bg-green-500 mr-2"></span>
+            <span class="truncate">{{ session.subtitle }}</span>
           </div>
         </div>
       </div>
       <div class="flex items-center space-x-1">
         <Button
+          v-if="session.showAutoReply"
           variant="text"
           rounded
           class="!p-2 !text-[var(--text-3)] hover:!bg-[var(--surface-3)]"
@@ -919,6 +964,7 @@ const handleClearHistory = async () => {
           <Repeat class="w-4 h-4" :class="{ 'animate-reply-pulse': autoReplyEnabled }" />
         </Button>
         <Button
+          v-if="session.showSearch"
           variant="text"
           rounded
           class="!p-2 !text-[var(--text-3)] hover:!bg-[var(--surface-3)]"
@@ -1079,14 +1125,14 @@ const handleClearHistory = async () => {
     <!-- 消息流区域 -->
     <div class="flex-grow overflow-hidden relative group/chat">
       <div ref="messageContainer" class="absolute inset-0 overflow-y-auto p-6 space-y-6">
-        <!-- 空状态（无消息且智能体不在运算中才显示） -->
-        <div v-if="!(chatStore.chatMessages[activeAgentId] || []).length && !isAgentProcessing" class="flex flex-col items-center justify-center h-full text-[var(--text-3)] space-y-4 opacity-50">
+        <!-- 空状态（无消息且无思考占位才显示） -->
+        <div v-if="!(chatStore.chatMessages[activeAgentId] || []).length && !session.isThinking()" class="flex flex-col items-center justify-center h-full text-[var(--text-3)] space-y-4 opacity-50">
           <div class="p-4 rounded-2xl bg-[var(--surface-2)] border border-[var(--border)]">
             <Sparkles class="w-12 h-12" />
           </div>
           <div class="text-center">
-            <p class="text-lg font-medium text-[var(--text-2)]">开始在 {{ tabTitle }} 协作</p>
-            <p class="text-sm mt-1">选择一个智能体或直接发送指令</p>
+            <p class="text-lg font-medium text-[var(--text-2)]">{{ session.emptyTitle }}</p>
+            <p class="text-sm mt-1">{{ session.emptySubtitle }}</p>
           </div>
         </div>
 
@@ -1095,12 +1141,13 @@ const handleClearHistory = async () => {
           <ChatMessageList
             :agent-id="activeAgentId"
             :org-id="orgId"
-            :regeneration-agent-id="regenerationAgentId || undefined"
+            :regeneration-agent-id="session.regenerationAgentId || undefined"
             :search-keyword="searchKeyword"
             :is-batch-mode="isBatchMode"
             v-model:selected-message-ids="selectedMessageIds"
-            :is-thinking="isAgentProcessing"
-            :thinking-phase="thinkingPhase"
+            :is-thinking="session.isThinking()"
+            :thinking-phase="session.thinkingPhase()"
+            :on-navigate-sender="session.navigateSender"
           />
         </div>
       </div>
@@ -1206,13 +1253,15 @@ const handleClearHistory = async () => {
             <Textarea
               ref="messageTextareaRef"
               v-model="message"
-              :placeholder="placeholder"
+              :placeholder="session.placeholder"
               :rows="1"
               class="flex-grow !bg-transparent !border-none !ring-0 !shadow-none !py-3 text-sm max-h-[50vh] chat-textarea"
               @keydown="handleKeydown"
               @input="autoResize"
+              :disabled="!session.canSend"
             />
             <Button
+              v-if="session.showSuggestions"
               variant="text"
               rounded
               @click="toggleSuggestions"
@@ -1225,9 +1274,9 @@ const handleClearHistory = async () => {
             <Button
               ref="sendButtonRef"
               @click="sendMessage"
-              :disabled="!message.trim() || isSending"
+              :disabled="!message.trim() || isSending || !session.canSend"
               class="!rounded-xl !p-3 transition-all duration-200 min-w-[44px]"
-              :class="message.trim() && !isSending
+              :class="message.trim() && !isSending && session.canSend
                 ? '!bg-[var(--primary)] !text-white hover:!brightness-110 hover:!shadow-md'
                 : '!bg-[var(--surface-3)] !text-[var(--text-3)]'"
             >

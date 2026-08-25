@@ -26,6 +26,7 @@ const commandTool = makeToolDef("run_javascript");
 const getOrgStructureTool = makeToolDef("get_org_structure");
 const skillTool = makeToolDef("load_skill_detail");
 const chromeTool = makeToolDef("chrome_new_tab");
+const groupMsgTool = makeToolDef("send_group_message");
 
 describe("RuntimeTools - 默认工具组行为", () => {
   describe("getToolDefinitionsForAgent - toolGroups 默认值与 org_management 强制包含", () => {
@@ -47,7 +48,7 @@ describe("RuntimeTools - 默认工具组行为", () => {
           getToolDefinitions(groupIds) {
             const tools = [];
             if (groupIds.includes("org_management")) {
-              tools.push(orgMgmtTool, getOrgStructureTool);
+              tools.push(orgMgmtTool, getOrgStructureTool, groupMsgTool);
             }
             if (groupIds.includes("workspace")) {
               tools.push(workspaceTool);
@@ -67,7 +68,7 @@ describe("RuntimeTools - 默认工具组行为", () => {
             return tools;
           },
           isToolInGroups(toolName, groupIds) {
-            if (toolName === "find_role_by_name" || toolName === "get_org_structure") {
+            if (toolName === "find_role_by_name" || toolName === "get_org_structure" || toolName === "send_group_message") {
               return groupIds.includes("org_management");
             }
             if (toolName === "file_read_lines") return groupIds.includes("workspace");
@@ -100,6 +101,15 @@ describe("RuntimeTools - 默认工具组行为", () => {
       assert.strictEqual(names.includes("file_read_lines"), false, "不应有 workspace 工具");
       assert.strictEqual(names.includes("http_request"), false, "不应有 network 工具");
       assert.strictEqual(names.includes("run_javascript"), false, "不应有 command 工具");
+    });
+
+    it("群工具属于 org_management：默认工具组应包含 send_group_message", () => {
+      const runtime = makeRuntime({ toolGroups: null });
+      const runtimeTools = new RuntimeTools(runtime);
+      const defs = runtimeTools.getToolDefinitionsForAgent("agent-1");
+
+      const names = defs.map(d => d?.function?.name);
+      assert.ok(names.includes("send_group_message"), "群工具应在 org_management 组中默认可见");
     });
 
     it("指定 toolGroups 为 [\"workspace\"] 时应包含 org_management + workspace", () => {
@@ -197,6 +207,7 @@ describe("RuntimeTools - 默认工具组行为", () => {
             const mapping = {
               find_role_by_name: "org_management",
               get_org_structure: "org_management",
+              send_group_message: "org_management",
               file_read_lines: "workspace",
               http_request: "network",
               run_javascript: "command",
@@ -219,6 +230,20 @@ describe("RuntimeTools - 默认工具组行为", () => {
       const runtimeTools = new RuntimeTools(runtime);
 
       assert.strictEqual(runtimeTools.isToolAvailableForAgent("agent-1", "find_role_by_name"), true);
+    });
+
+    it("群工具属于 org_management：toolGroups 为 null 时 send_group_message 应可用", () => {
+      const runtime = makeRuntime({ toolGroups: null });
+      const runtimeTools = new RuntimeTools(runtime);
+
+      assert.strictEqual(runtimeTools.isToolAvailableForAgent("agent-1", "send_group_message"), true);
+    });
+
+    it("群工具属于 org_management：老岗位持久化数据（无 group_chat）仍可用", () => {
+      const runtime = makeRuntime({ toolGroups: ["workspace"] });
+      const runtimeTools = new RuntimeTools(runtime);
+
+      assert.strictEqual(runtimeTools.isToolAvailableForAgent("agent-1", "send_group_message"), true);
     });
 
     it("toolGroups 为 null 时非 org_management 工具应不可用", () => {

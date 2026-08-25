@@ -5,8 +5,8 @@
  */
 export const BUILTIN_TOOL_GROUPS = {
   org_management: {
-    description: "组织管理工具 - 用于创建岗位、创建智能体实例、发送消息、终止智能体等组织架构管理操作。创建岗位时可通过 toolGroups 参数限制该岗位可用的工具组。",
-    tools: ["find_role_by_name", "create_role", "spawn_agent_with_task", "delete_agent", "send_message", "add_todo_item", "list_todo_items", "update_todo_item", "delete_todo_item"]
+    description: "组织管理工具 - 用于创建岗位、创建智能体实例、发送消息、终止智能体、创建和管理群聊（建群、发群消息、拉人、退群、解散、查看群信息）等组织架构与协作管理操作。创建岗位时可通过 toolGroups 参数限制该岗位可用的工具组。",
+    tools: ["find_role_by_name", "create_role", "spawn_agent_with_task", "delete_agent", "send_message", "add_todo_item", "list_todo_items", "update_todo_item", "delete_todo_item", "create_group", "send_group_message", "invite_to_group", "leave_group", "dissolve_group", "get_group_info", "list_my_groups"]
   },
   model_capability: {
     description: "模型能力工具 - 将多模态能力封装为工具函数，按能力调用对应模型并返回文本结果。",

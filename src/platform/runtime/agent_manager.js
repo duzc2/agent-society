@@ -571,6 +571,9 @@ export class AgentManager {
       reason: args.reason ?? null
     });
 
+    // agentTerminated 事件已统一在 forceTerminateAgent 中发出
+    // 本方法为工具调用路径，最终会走到 forceTerminateAgent
+
     return { ok: true, terminatedAgentId: targetId };
   }
 

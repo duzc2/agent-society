@@ -115,12 +115,13 @@ export const useAgentStore = defineStore('agent', () => {
 
       // 递归收集所有后代，传递组织ID以正确标记每个智能体所属的组织
       function collectAll(node: OrgTreeNode, orgId: string | null = null) {
-        for (const child of node.children) {
-          const childOrgId = child.parentAgentId === 'root' ? child.id : orgId ?? 'home';
-          result.push(nodeToAgent(child, childOrgId));
-          collectAll(child, childOrgId);
-        }
-      }
+      	        for (const child of node.children) {
+      	          if (child.status === 'deleted') continue;
+      	          const childOrgId = child.parentAgentId === 'root' ? child.id : orgId ?? 'home';
+      	          result.push(nodeToAgent(child, childOrgId));
+      	          collectAll(child, childOrgId);
+      	        }
+      	      }
       if (rootNode) collectAll(rootNode);
       if (userNode) collectAll(userNode);
 

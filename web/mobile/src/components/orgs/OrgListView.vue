@@ -3,7 +3,7 @@
  * 组织列表页面
  * 显示所有组织 + 创建新组织（内联对话，与 PC 版逻辑一致）
  */
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { Plus, Loader, X, Send, Pencil, Check, ChevronDown, ChevronRight, Archive } from 'lucide-vue-next';
 import { useOrgStore } from '../../stores/org';
 import { useAgentStore } from '../../stores/agent';
@@ -12,6 +12,7 @@ import { useAppStore } from '../../stores/app';
 import { apiService } from '../../services/api';
 import { orgTreeState } from '../../services/heartbeatService';
 import MessageList from '../chat/MessageList.vue';
+import GroupsList from '../chat/GroupsList.vue';
 
 const appStore = useAppStore();
 const orgStore = useOrgStore();
@@ -24,6 +25,14 @@ const createInput = ref('');
 const sendingCreate = ref(false);
 
 const showDeletedOrgs = ref(false);
+
+// 分段控件：'agents' | 'groups'
+const activeSegment = ref<'agents' | 'groups'>('agents');
+
+// 加载群列表
+onMounted(() => {
+  chatStore.fetchGroupList();
+});
 
 // 检查指定组织是否已删除（org root 节点的 status 不是 "active"）
 const isOrgDeleted = (orgId: string): boolean => {
@@ -143,7 +152,33 @@ async function enterOrg(orgId: string) {
 
 <template>
   <div class="h-full flex flex-col overflow-hidden">
-    <!-- 组织列表 -->
+    <!-- 分段控件：智能体 / 群 -->
+    <div class="flex shrink-0 bg-[var(--surface-1)] border-b border-[var(--border)]">
+      <button
+        class="flex-1 py-3 text-sm font-medium transition-all border-b-2"
+        :class="activeSegment === 'agents'
+          ? 'text-[var(--primary)] border-[var(--primary)]'
+          : 'text-[var(--text-3)] border-transparent'"
+        @click="activeSegment = 'agents'"
+      >
+        智能体
+      </button>
+      <button
+        class="flex-1 py-3 text-sm font-medium transition-all border-b-2"
+        :class="activeSegment === 'groups'
+          ? 'text-[var(--primary)] border-[var(--primary)]'
+          : 'text-[var(--text-3)] border-transparent'"
+        @click="activeSegment = 'groups'; chatStore.fetchGroupList()"
+      >
+        群
+      </button>
+    </div>
+
+    <!-- 群列表 -->
+    <GroupsList v-if="activeSegment === 'groups'" />
+
+    <!-- 组织列表（智能体段） -->
+    <template v-else>
     <div
       class="overflow-y-auto px-4 py-3"
       :class="showCreateChat ? 'max-h-[38%] border-b border-[var(--border)]' : 'flex-1'"
@@ -302,5 +337,6 @@ async function enterOrg(orgId: string) {
         创建新组织
       </button>
     </div>
+  </template>
   </div>
 </template>

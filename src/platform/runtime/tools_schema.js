@@ -1149,6 +1149,110 @@ export class ToolSchema {
             }
           }
         }
+      },
+      // ===================================================================
+      // 群聊工具
+      // ===================================================================
+      {
+        type: "function",
+        function: {
+          name: "create_group",
+          description: "创建群聊，邀请指定成员加入。群聊用于多个智能体之间持续协作和反复沟通。创建后自动向所有成员发送入群通知，通知中包含全部成员名单和拉群原因。",
+          parameters: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "群名（必填）" },
+              memberIds: { type: "array", items: { type: "string" }, description: "初始成员 ID 列表（必填，至少一个）" },
+              description: { type: "string", description: "群描述（可选）" },
+              reason: { type: "string", description: "拉群原因（必填），说明为什么要创建这个群、需要大家协作什么。会写入首条系统消息并通知所有成员。" }
+            },
+            required: ["name", "memberIds", "reason"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "send_group_message",
+          description: "向群聊发送消息。所有群成员都能看到此消息，并可选择是否回复。群消息不需要每条都回复——请根据消息内容是否与你的职责和当前任务相关来决定是否回复。",
+          parameters: {
+            type: "object",
+            properties: {
+              groupId: { type: "string", description: "群 ID" },
+              payload: { type: "object", description: "消息内容，如 { text: '...' }" }
+            },
+            required: ["groupId", "payload"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "invite_to_group",
+          description: "邀请成员加入群聊。所有群成员都可以邀请他人加入。被邀请的成员会收到入群通知，通知中包含当前群全部成员名单和邀请原因。",
+          parameters: {
+            type: "object",
+            properties: {
+              groupId: { type: "string", description: "群 ID" },
+              memberIds: { type: "array", items: { type: "string" }, description: "要邀请的成员 ID 列表" },
+              reason: { type: "string", description: "邀请原因（必填），说明为什么邀请这些成员入群。会写入系统消息并通知所有群成员。" }
+            },
+            required: ["groupId", "memberIds", "reason"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "leave_group",
+          description: "主动退出群聊。退出后不再接收该群的消息。",
+          parameters: {
+            type: "object",
+            properties: {
+              groupId: { type: "string", description: "群 ID" }
+            },
+            required: ["groupId"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "dissolve_group",
+          description: "解散群聊。所有群成员都可以解散群。解散后所有成员将无法再向该群发送消息。",
+          parameters: {
+            type: "object",
+            properties: {
+              groupId: { type: "string", description: "群 ID" }
+            },
+            required: ["groupId"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "get_group_info",
+          description: "查看群的完整信息，包括成员列表（含状态）、最近消息摘要。",
+          parameters: {
+            type: "object",
+            properties: {
+              groupId: { type: "string", description: "群 ID" }
+            },
+            required: ["groupId"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "list_my_groups",
+          description: "列出我所在的所有群聊（基本信息）。",
+          parameters: {
+            type: "object",
+            properties: {}
+          }
+        }
       }
     ];
     return [...baseTools, ...this.modelTools._buildCapabilityToolDefinitions()];
