@@ -23,7 +23,7 @@ const memberAgents = computed<Agent[]>(() => {
     .filter((m: { id: string }) => m.id !== 'user')
     .map((m: { id: string; name?: string; status?: string }): Agent => {
       // 已退出成员：无论智能体当前是否在线，一律归入归档组（offline）
-      const exited = m.status === 'left' || m.status === 'terminated';
+      const exited = m.status === 'left' || m.status === 'terminated' || m.status === 'kicked';
       if (!exited) {
         const found = agentStore.allAgents.find(a => a.id === m.id);
         if (found) {
@@ -35,7 +35,7 @@ const memberAgents = computed<Agent[]>(() => {
         id: m.id,
         orgId: '',
         name: m.name || m.id,
-        role: exited ? '已退出' : '智能体',
+        role: exited ? (m.status === 'kicked' ? '已移出' : '已退出') : '智能体',
         roleId: null,
         status: (exited ? 'offline' : 'online') as Agent['status'],
         computeStatus: 'idle',

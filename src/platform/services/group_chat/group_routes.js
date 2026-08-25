@@ -249,6 +249,33 @@ async function registerGroupRoutes({ app, groupChatService, log }) {
   });
 
   /**
+   * DELETE /api/groups/:id/members/:memberId — 移出成员（踢人，user 操作）
+   */
+  app.delete("/api/groups/:id/members/:memberId", async (c) => {
+    try {
+      const groupId = c.req.param("id");
+      const memberId = c.req.param("memberId");
+
+      const result = await groupChatService.removeMembersFromGroup({
+        groupId,
+        actorId: "user",
+        memberIds: [memberId]
+      });
+
+      if (result.error) {
+        return c.json(result, 400);
+      }
+      return c.json({ ok: true, group: result.group });
+    } catch (err) {
+      log.error("[GroupRoutes] 移出成员失败", {
+        message: err.message,
+        stack: err.stack
+      });
+      return c.json({ error: "internal_error", message: "移出成员失败" }, 500);
+    }
+  });
+
+  /**
    * DELETE /api/groups/:id — 解散群（user 操作）
    */
   app.delete("/api/groups/:id", async (c) => {

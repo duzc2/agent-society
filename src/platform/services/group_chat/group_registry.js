@@ -171,7 +171,7 @@ export class GroupRegistry {
    * 从群中移除成员（留存退出记录，供成员列表展示"已退出成员"）。
    * @param {string} groupId
    * @param {string[]} agentIds
-   * @param {'left'|'terminated'} [reason] - 退出原因（主动退群 / 智能体终止自动退群）
+   * @param {'left'|'terminated'|'kicked'} [reason] - 退出原因（主动退群 / 智能体终止自动退群 / 被移出群聊）
    * @returns {GroupMeta}
    */
   async removeMembers(groupId, agentIds, reason = "left") {
@@ -246,7 +246,7 @@ export class GroupRegistry {
  * @property {string} name - 群名
  * @property {string} description - 群描述
  * @property {string[]} members - 成员 ID 列表（仅活跃成员）
- * @property {Array<{id: string, leftAt: string, reason: 'left'|'terminated'}>} exitedMembers - 已退出成员记录
+ * @property {Array<{id: string, leftAt: string, reason: 'left'|'terminated'|'kicked'}>} exitedMembers - 已退出成员记录
  * @property {string} createdAt - 创建时间
  * @property {string} updatedAt - 更新时间
  * @property {'active'|'archived'} status - 群状态

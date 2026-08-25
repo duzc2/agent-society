@@ -354,6 +354,72 @@ export class GroupChatService {
   }
 
   /**
+   * 将成员移出群聊（踢人）。
+   * 与邀请一致：所有群成员都可以踢人（无群主概念）；user（用户端点智能体）操作同样放行。
+   * 踢出后若剩余 < 3 人，自动解散（与退群一致）。
+   * @param {object} params
+   * @param {string} params.groupId - 群 ID
+   * @param {string} params.actorId - 操作者
+   * @param {string[]} params.memberIds - 要移出的成员
+   * @returns {object}
+   */
+  async removeMembersFromGroup({ groupId, actorId, memberIds }) {
+    const group = this.registry.get(groupId);
+    if (!group) return { error: "group_not_found", message: `群 ${groupId} 不存在` };
+    if (group.status !== "active") return { error: "group_archived", message: "群已解散" };
+
+    // 所有群成员都可以踢人；user（用户端点智能体）操作同样放行
+    if (!group.members.includes(actorId) && actorId !== "user") {
+      return { error: "not_member", message: "只有群成员可以移出成员" };
+    }
+
+    // 仅移出当前活跃成员；root/user 不能加入群，天然不可被移出（双保险过滤）
+    const removable = memberIds.filter(id => group.members.includes(id) && id !== "root" && id !== "user");
+    if (removable.length === 0) {
+      return { error: "no_members_to_remove", message: "指定成员均不在群中" };
+    }
+
+    const removedNames = removable.map(id => {
+      const agent = this.org.getAgent(id);
+      return agent ? agent.name : id;
+    }).join("、");
+    const actorName = actorId === "user" ? "用户" : (() => {
+      const agent = this.org.getAgent(actorId);
+      return agent ? agent.name : actorId;
+    })();
+
+    await this.registry.removeMembers(groupId, removable, "kicked");
+
+    // 系统消息
+    const sysMsg = this.messageStore.createSystemMessage(groupId, `${actorName} 将 ${removedNames} 移出群聊`);
+    await this.messageStore.append(groupId, sysMsg);
+
+    // 心跳广播
+    this.heartbeatBroker.broadcast("group_event", {
+      groupId,
+      action: "group_updated",
+      actorId,
+      group: this._serializeGroup(this.registry.get(groupId))
+    });
+
+    // 通知被踢者：他们已失去群历史访问权，必须直接告知
+    for (const memberId of removable) {
+      this.bus.send({
+        to: memberId,
+        // 以群身份通知被踢者（系统通知）
+        from: groupId,
+        payload: { text: `你已被移出群聊 ${group.name}` },
+        extras: { groupName: group.name, senderAgentId: "system", skipSenderCopy: true }
+      });
+    }
+
+    // 踢人后若剩余 < 3 人，自动解散（await 保证返回前状态已确定）
+    await this._autoDissolveIfSmall(groupId);
+
+    return { group: this._serializeGroup(this.registry.get(groupId)) };
+  }
+
+  /**
    * 退出群聊。
    * 任何成员都可以随时退群。
    * @param {object} params
@@ -657,7 +723,7 @@ export class GroupChatService {
         base.members.push({
           id: e.id,
           name: agent ? agent.name : e.id,
-          status: e.reason === "terminated" ? "terminated" : "left"
+          status: e.reason === "terminated" ? "terminated" : (e.reason === "kicked" ? "kicked" : "left")
         });
       }
     }

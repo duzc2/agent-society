@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Send, Bot, Sparkles, ArrowDown, User, Users, Search, MoreVertical, Loader2, X, Trash2, FileText, CheckSquare, Eraser, SlidersHorizontal, Lightbulb, Download, Repeat, History } from 'lucide-vue-next';
+import { Send, Bot, Sparkles, ArrowDown, User, Users, Search, MoreVertical, Loader2, X, Trash2, FileText, CheckSquare, Eraser, SlidersHorizontal, Lightbulb, Download, Repeat, History, UserPlus, UserMinus, XCircle } from 'lucide-vue-next';
 import MoodGrid from '../common/MoodGrid.vue';
 import Button from 'primevue/button';
 import Textarea from 'primevue/textarea';
@@ -176,6 +176,55 @@ const agentSession = computed<ChatSessionAdapter>(() => ({
   showSearch: true,
   showSuggestions: true,
   canClearHistory: true,
+  // 智能体会话的更多菜单项（原 ChatArea 硬编码项，迁入适配器统一走注入）
+  menuItems: () => [
+    {
+      label: '所有文件',
+      icon: 'files',
+      command: () => {
+        const agent = activeAgent.value;
+        if (agent && agent.id !== 'user') {
+          openAgentFilesDialog(dialog, props.orgId, agent.id, agent.name);
+        }
+      },
+      disabled: !activeAgent.value || activeAgent.value.id === 'user'
+    },
+    {
+      label: '历史命令',
+      icon: 'history',
+      command: () => {
+        const agent = activeAgent.value;
+        if (agent && agent.id !== 'user') {
+          openAgentCommandsDialog(dialog, agent.id, agent.name);
+        }
+      },
+      disabled: !activeAgent.value || activeAgent.value.id === 'user'
+    },
+    {
+      label: '批量管理',
+      icon: 'check-square',
+      command: () => toggleBatchMode(),
+      disabled: !activeAgent.value || (chatStore.chatMessages[activeAgentId.value] || []).length === 0
+    },
+    {
+      label: '属性',
+      icon: 'sliders-horizontal',
+      command: () => openAgentPropertiesDialog(),
+      disabled: !activeAgent.value || activeAgent.value.id === 'user'
+    },
+    {
+      label: '清空聊天记录',
+      icon: 'eraser',
+      command: () => openClearHistoryConfirm(),
+      disabled: !activeAgent.value || (chatStore.chatMessages[activeAgentId.value] || []).length === 0
+    },
+    {
+      label: '删除智能体',
+      icon: 'trash-2',
+      command: () => openDeleteConfirm(),
+      disabled: !activeAgent.value || activeAgent.value.id === 'user' || isDeleting.value
+    }
+  ],
   loadAutoReplyConfig,
   onMessagesChanged: () => refreshAgentFiles(activeAgentId.value),
 }));
@@ -221,57 +270,8 @@ const deleteConfirmMessage = ref('');
 const showClearHistoryConfirm = ref(false);
 
 
-/**
- * 更多菜单项
- */
-const moreMenuItems = computed(() => [
-  {
-    label: '所有文件',
-    icon: 'files',
-    command: () => {
-      const agent = activeAgent.value;
-      if (agent && agent.id !== 'user') {
-        openAgentFilesDialog(dialog, props.orgId, agent.id, agent.name);
-      }
-    },
-    disabled: !activeAgent.value || activeAgent.value.id === 'user'
-  },
-  {
-    label: '历史命令',
-    icon: 'history',
-    command: () => {
-      const agent = activeAgent.value;
-      if (agent && agent.id !== 'user') {
-        openAgentCommandsDialog(dialog, agent.id, agent.name);
-      }
-    },
-    disabled: !activeAgent.value || activeAgent.value.id === 'user'
-  },
-  {
-    label: '批量管理',
-    icon: 'check-square',
-    command: () => toggleBatchMode(),
-    disabled: !activeAgent.value || (chatStore.chatMessages[activeAgentId.value] || []).length === 0
-  },
-  {
-    label: '属性',
-    icon: 'sliders-horizontal',
-    command: () => openAgentPropertiesDialog(),
-    disabled: !activeAgent.value || activeAgent.value.id === 'user'
-  },
-  {
-    label: '清空聊天记录',
-    icon: 'eraser',
-    command: () => openClearHistoryConfirm(),
-    disabled: !activeAgent.value || !session.value.canClearHistory || (chatStore.chatMessages[activeAgentId.value] || []).length === 0
-  },
-  {
-    label: '删除智能体',
-    icon: 'trash-2',
-    command: () => openDeleteConfirm(),
-    disabled: !activeAgent.value || activeAgent.value.id === 'user' || isDeleting.value
-  }
-]);
+/** 更多菜单项：由会话适配器注入（智能体 6 项 / 群 3 项，ChatArea 不再硬编码） */
+const moreMenuItems = computed(() => session.value.menuItems());
 
 /**
  * 检查滚动位置，决定是否显示"返回底部"按钮，以及触发无限滚动加载
@@ -946,6 +946,8 @@ const handleClearHistory = async () => {
             <span v-if="session.icon === 'agent'" class="inline-block w-2 h-2 rounded-full bg-green-500 mr-2"></span>
             <span class="truncate">{{ session.subtitle }}</span>
           </div>
+          <!-- 描述行：仅群适配器提供（智能体适配器无该字段，不渲染） -->
+          <div v-if="session.description" class="text-[11px] text-[var(--text-3)] truncate leading-tight mt-0.5">{{ session.description }}</div>
         </div>
       </div>
       <div class="flex items-center space-x-1">
@@ -992,7 +994,10 @@ const handleClearHistory = async () => {
               <SlidersHorizontal v-if="item.icon === 'sliders-horizontal'" class="w-4 h-4 mr-2 text-[var(--text-1)]" />
               <Eraser v-if="item.icon === 'eraser'" class="w-4 h-4 mr-2 text-red-500" />
               <Trash2 v-if="item.icon === 'trash-2'" class="w-4 h-4 mr-2 text-red-500" />
-              <span class="text-sm" :class="(item.icon === 'trash-2' || item.icon === 'eraser') ? 'text-red-500' : 'text-[var(--text-1)]'">
+              <UserPlus v-if="item.icon === 'user-plus'" class="w-4 h-4 mr-2 text-[var(--text-1)]" />
+              <UserMinus v-if="item.icon === 'user-minus'" class="w-4 h-4 mr-2 text-[var(--text-1)]" />
+              <XCircle v-if="item.icon === 'x-circle'" class="w-4 h-4 mr-2 text-red-500" />
+              <span class="text-sm" :class="(item.icon === 'trash-2' || item.icon === 'eraser' || item.icon === 'x-circle') ? 'text-red-500' : 'text-[var(--text-1)]'">
                 {{ item.label }}
               </span>
             </div>

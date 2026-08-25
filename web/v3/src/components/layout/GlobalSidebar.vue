@@ -18,6 +18,7 @@ import { openSettingsWindow } from '../settings/settingsWindow';
 import { openSkillManagerWindow } from '../skills/skillManagerWindow';
 import OrgTemplateManager from '../template/OrgTemplateManager.vue';
 import ModuleManagerDialog from '../modules/ModuleManagerDialog.vue';
+import MemberPicker from '../common/MemberPicker.vue';
 import WorkspaceFileAccessPanel from '../workspaceFileAccess/WorkspaceFileAccessPanel.vue';
 import { createDragEndHandler } from '../../utils/dialogBounds';
 import { ZIndex } from '@primeuix/utils';
@@ -38,37 +39,11 @@ const newGroupName = ref('');
 const newGroupDesc = ref('');
 const newGroupReason = ref('');
 const selectedMembers = ref<string[]>([]);
-const memberSearch = ref('');
 
 // 可用智能体（排除 user 和 root）
 const availableAgents = computed(() =>
   agentStore.allAgents.filter(a => a.id !== 'user' && a.id !== 'root')
 );
-
-// 搜索过滤后的智能体列表
-const orgNameMap = computed(() => {
-  const map: Record<string, string> = {};
-  function walk(nodes: any[]) {
-    for (const n of nodes) {
-      // 组织节点：有 children 且有 roleName
-      if (n.children?.length > 0 && n.roleName) map[n.id] = n.roleName;
-      if (n.children) walk(n.children);
-    }
-  }
-  walk(orgTreeState.tree);
-  return map;
-});
-
-const filteredAgents = computed(() => {
-  const q = memberSearch.value.trim().toLowerCase();
-  if (!q) return availableAgents.value;
-  return availableAgents.value.filter(a => {
-    const orgName = orgNameMap.value[a.orgId] || '';
-    return a.name.toLowerCase().includes(q) ||
-      (a.role && a.role.toLowerCase().includes(q)) ||
-      orgName.toLowerCase().includes(q);
-  });
-});
 
 // 群列表（活跃 / 已解散归档分组，解散的群可随时查阅历史）
 const activeGroups = computed(() => chatStore.groupList.filter((g: any) => g.status !== 'archived'));
@@ -102,7 +77,6 @@ const handleCreateGroup = async () => {
     newGroupDesc.value = '';
     newGroupReason.value = '';
     selectedMembers.value = [];
-    memberSearch.value = '';
     await chatStore.fetchGroupList();
   } catch (e: any) {
     console.error('[GlobalSidebar] 创建群失败', e);
@@ -957,6 +931,18 @@ const handleOrgClick = (org: any) => {
 
       <!-- 群 页 -->
       <template v-if="appStore.activeSidebarTab === 'groups'">
+        <!-- 新建群聊按钮：置顶于群列表上方（不随列表滚动） -->
+        <div class="px-1 pt-1 pb-0.5">
+          <Button
+            variant="outlined"
+            class="w-full !justify-center !text-xs !py-1.5"
+            :class="appStore.isSidebarCollapsed ? '!px-1' : ''"
+            @click="showCreateGroupDialog = true"
+          >
+            <Plus class="w-3.5 h-3.5" :class="appStore.isSidebarCollapsed ? '' : 'mr-1'" />
+            <template v-if="!appStore.isSidebarCollapsed">新建群聊</template>
+          </Button>
+        </div>
         <div class="flex-1 overflow-y-auto min-h-0">
           <div class="space-y-1 px-1 py-1">
             <div
@@ -1014,18 +1000,6 @@ const handleOrgClick = (org: any) => {
               暂无群聊
             </div>
           </div>
-        </div>
-        <!-- 新建群聊按钮 -->
-        <div class="p-2 border-t border-[var(--border)]">
-          <Button
-            variant="outlined"
-            class="w-full !justify-center !text-xs !py-1.5"
-            :class="appStore.isSidebarCollapsed ? '!px-1' : ''"
-            @click="showCreateGroupDialog = true"
-          >
-            <Plus class="w-3.5 h-3.5" :class="appStore.isSidebarCollapsed ? '' : 'mr-1'" />
-            <template v-if="!appStore.isSidebarCollapsed">新建群聊</template>
-          </Button>
         </div>
       </template>
 
@@ -1175,43 +1149,10 @@ const handleOrgClick = (org: any) => {
         class="!w-full"
         @keydown.enter="handleCreateGroup"
       />
-      <!-- 成员选择 -->
+      <!-- 成员选择（搜索 + 勾选复用 MemberPicker） -->
       <div class="flex flex-col gap-1.5">
         <span class="text-xs text-[var(--text-3)]">选择成员</span>
-        <!-- 搜索框 -->
-        <div class="relative">
-          <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-3)]" />
-          <input
-            v-model="memberSearch"
-            type="text"
-            placeholder="搜索名称、角色或组织..."
-            class="w-full pl-8 pr-3 py-1.5 text-sm rounded-md border border-[var(--border-1)] bg-[var(--surface-1)] text-[var(--text-1)] placeholder:text-[var(--text-3)] focus:outline-none focus:border-[var(--primary)]"
-          />
-        </div>
-        <div v-if="filteredAgents.length === 0" class="text-xs text-[var(--text-3)] py-2 text-center">
-          {{ memberSearch ? '无匹配智能体' : '暂无可选智能体' }}
-        </div>
-        <div v-else class="max-h-48 overflow-y-auto border border-[var(--border-1)] rounded-md">
-          <label
-            v-for="agent in filteredAgents"
-            :key="agent.id"
-            class="flex items-center gap-2 px-3 py-2 hover:bg-[var(--surface-2)] cursor-pointer border-b border-[var(--border-1)] last:border-b-0"
-          >
-            <input
-              type="checkbox"
-              :value="agent.id"
-              v-model="selectedMembers"
-              class="w-4 h-4 accent-[var(--primary)] shrink-0"
-            />
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="text-sm text-[var(--text-1)] truncate">{{ agent.name }}</span>
-                <span v-if="agent.role" class="text-xs text-[var(--text-3)] shrink-0">{{ agent.role }}</span>
-              </div>
-              <div v-if="orgNameMap[agent.orgId]" class="text-[11px] text-[var(--text-3)] truncate">{{ orgNameMap[agent.orgId] }}</div>
-            </div>
-          </label>
-        </div>
+        <MemberPicker v-model="selectedMembers" :agents="availableAgents" />
         <span v-if="selectedMembers.length > 0" class="text-xs" :class="selectedMembers.length <= 2 ? 'text-red-400' : 'text-[var(--text-3)]'">
           已选 {{ selectedMembers.length }} 个成员{{ selectedMembers.length <= 2 ? '（至少需要 3 个）' : '' }}
         </span>
@@ -1221,7 +1162,7 @@ const handleOrgClick = (org: any) => {
       <Button
         label="取消"
         variant="text"
-        @click="showCreateGroupDialog = false; selectedMembers = []; memberSearch = ''; newGroupReason = ''"
+        @click="showCreateGroupDialog = false; selectedMembers = []; newGroupReason = ''"
       />
       <Button
         label="创建"

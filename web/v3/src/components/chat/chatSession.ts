@@ -5,10 +5,20 @@
  * 所有差异通过函数执行与返回值体现，ChatArea 内部零会话类型分支。
  */
 import { computed, type ComputedRef } from 'vue';
+import { useDialog } from 'primevue/usedialog';
 import { useChatStore } from '../../stores/chat';
 import { useAgentStore } from '../../stores/agent';
 import { useAppStore } from '../../stores/app';
 import { useOrgStore } from '../../stores/org';
+import { openGroupInviteDialog, openGroupKickDialog, openGroupDissolveDialog } from './groupDialogs';
+
+/** 头部更多菜单项（由各会话适配器注入；icon 为 ChatArea #item 模板中的图标键） */
+export interface ChatMenuItem {
+  label: string;
+  icon: string;
+  command: () => void;
+  disabled?: boolean;
+}
 
 export interface ChatSessionAdapter {
   /** 会话 id（消息缓存/分页键 chatMessages[id]） */
@@ -18,6 +28,8 @@ export interface ChatSessionAdapter {
   /** 头部标题 / 副标题（智能体：名称+角色；群：群名+人数） */
   title: string;
   subtitle: string;
+  /** 头部描述行（仅群适配器提供；缺省不渲染） */
+  description?: string;
   /** 输入框占位符 */
   placeholder: string;
   /** 空状态文案 */
@@ -43,6 +55,8 @@ export interface ChatSessionAdapter {
   showSearch: boolean;
   showSuggestions: boolean;
   canClearHistory: boolean;
+  /** 头部更多菜单项（智能体：文件/命令等；群：拉人/踢人/解散） */
+  menuItems(): ChatMenuItem[];
   /** 自动回复配置加载钩子 */
   loadAutoReplyConfig?(): void;
   /** 消息变化副作用钩子（agent：刷新文件列表；群：无） */
@@ -72,6 +86,7 @@ export function openAgentChatTab(agentId: string): void {
 export function useGroupChatSession(groupIdSource: string | ComputedRef<string>): ComputedRef<ChatSessionAdapter> {
   const chatStore = useChatStore();
   const agentStore = useAgentStore();
+  const dialog = useDialog();
 
   const groupId = computed(() =>
     typeof groupIdSource === 'string' ? groupIdSource : groupIdSource.value
@@ -85,6 +100,7 @@ export function useGroupChatSession(groupIdSource: string | ComputedRef<string>)
       icon: 'group',
       title: meta?.name ?? '群聊',
       subtitle: `${meta?.memberCount ?? '?'} 人`,
+      description: meta?.description ?? '',
       placeholder: '向群里发送消息',
       emptyTitle: '群聊还没有消息',
       emptySubtitle: '发一条消息开启讨论吧',
@@ -108,6 +124,30 @@ export function useGroupChatSession(groupIdSource: string | ComputedRef<string>)
       showSearch: false,
       showSuggestions: false,
       canClearHistory: false,
+      menuItems: () => {
+        // 归档群为只读：拉人/踢人/解散全部禁用（与 canSend 同判定）
+        const archived = (meta?.status ?? 'active') === 'archived';
+        return [
+          {
+            label: '拉人',
+            icon: 'user-plus',
+            command: () => openGroupInviteDialog(dialog, gid),
+            disabled: archived
+          },
+          {
+            label: '踢人',
+            icon: 'user-minus',
+            command: () => openGroupKickDialog(dialog, gid),
+            disabled: archived
+          },
+          {
+            label: '解散',
+            icon: 'x-circle',
+            command: () => openGroupDissolveDialog(dialog, gid, meta?.name ?? '群聊'),
+            disabled: archived
+          }
+        ];
+      },
       navigateSender: (agentId: string) => {
         if (agentId === 'user') return;
         openAgentChatTab(agentId);

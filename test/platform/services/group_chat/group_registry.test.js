@@ -55,6 +55,15 @@ describe("GroupRegistry — 退群记录与归档", () => {
     assert.strictEqual(reg.get(group.id).exitedMembers[0].reason, "terminated");
   });
 
+  it("removeMembers 被踢原因应留存 reason=kicked", async () => {
+    const reg = makeRegistry();
+    const group = await reg.create({ name: "测试群", members: ["a1", "a2", "a3"] });
+
+    await reg.removeMembers(group.id, ["a1"], "kicked");
+
+    assert.strictEqual(reg.get(group.id).exitedMembers[0].reason, "kicked");
+  });
+
   it("addMembers 重新邀请已退出成员应清除其退出记录", async () => {
     const reg = makeRegistry();
     const group = await reg.create({ name: "测试群", members: ["a1", "a2", "a3"] });
@@ -235,6 +244,134 @@ describe("GroupChatService — 启动对账（旧数据处理）", () => {
   });
 });
 
+describe("GroupChatService — 踢人", () => {
+  function makeService({ agentStatusMap, broadcasts, sends }) {
+    return new GroupChatService({
+      bus: {
+        send: (msg) => { sends.push(msg); return { messageId: "m" }; }
+      },
+      heartbeatBroker: {
+        broadcast: (type, payload) => broadcasts.push({ type, payload })
+      },
+      org: {
+        getAgent: (id) => agentStatusMap.get(id) ?? null,
+        getRole: () => null
+      },
+      runtimeEvents: { onAgentTerminated() {} },
+      runtimeLlm: { registerMessageFormatter() {} },
+      logRoot: testLoggerRoot,
+      dataDir: path.join(tmpDir, "data"),
+      runtimeDir: path.join(tmpDir, "runtime")
+    });
+  }
+
+  /** 预置群（与服务同 dataDir 构造路径），服务 init 后即可操作 */
+  function makeRegistry() {
+    return new GroupRegistry({
+      dataDir: path.join(tmpDir, "data", "runtime", "state"),
+      logger: makeTestLogger("GroupRegistry")
+    });
+  }
+
+  const AGENTS = new Map([
+    ["a1", { name: "成员1", status: "active" }],
+    ["a2", { name: "成员2", status: "active" }],
+    ["a3", { name: "成员3", status: "active" }],
+    ["a4", { name: "成员4", status: "active" }]
+  ]);
+
+  it("踢出成员：留存 kicked 记录 + 系统消息 + group_updated 广播 + 通知被踢者", async () => {
+    const reg = makeRegistry();
+    const group = await reg.create({ name: "踢人测试群", members: ["a1", "a2", "a3", "a4"] });
+
+    const broadcasts = [];
+    const sends = [];
+    const svc = makeService({ agentStatusMap: AGENTS, broadcasts, sends });
+    await svc.init();
+
+    const result = await svc.removeMembersFromGroup({
+      groupId: group.id,
+      actorId: "user",
+      memberIds: ["a2"]
+    });
+
+    assert.strictEqual(result.error, undefined);
+
+    await reg.load();
+    const updated = reg.get(group.id);
+    assert.deepStrictEqual(updated.members.sort(), ["a1", "a3", "a4"], "a2 应被移出");
+    assert.strictEqual(updated.status, "active", "4 人踢 1 剩 3 人，不应解散");
+    assert.strictEqual(updated.exitedMembers.length, 1);
+    assert.strictEqual(updated.exitedMembers[0].id, "a2");
+    assert.strictEqual(updated.exitedMembers[0].reason, "kicked");
+
+    const msgs = await svc.messageStore.loadMessages(group.id);
+    assert.ok(msgs.some(m => m.payload.text.includes("用户 将 成员2 移出群聊")), "应有踢人系统消息");
+    assert.ok(
+      broadcasts.some(b => b.type === "group_event" && b.payload.action === "group_updated"),
+      "应广播 group_updated"
+    );
+    assert.ok(
+      sends.some(s => s.to === "a2" && s.from === group.id && s.payload.text.includes("你已被移出群聊")),
+      "应以群身份通知被踢者"
+    );
+    assert.ok(!sends.some(s => s.to !== "a2"), "不应通知未被踢的成员（系统消息已在群历史）");
+  });
+
+  it("踢到不足 3 人自动解散：archived + 解散系统消息 + group_dissolved 广播", async () => {
+    const reg = makeRegistry();
+    const group = await reg.create({ name: "三人群", members: ["a1", "a2", "a3"] });
+
+    const broadcasts = [];
+    const svc = makeService({ agentStatusMap: AGENTS, broadcasts, sends: [] });
+    await svc.init();
+
+    const result = await svc.removeMembersFromGroup({
+      groupId: group.id,
+      actorId: "user",
+      memberIds: ["a1"]
+    });
+
+    await reg.load();
+    const updated = reg.get(group.id);
+    assert.strictEqual(updated.status, "archived", "踢后剩 2 人应自动解散归档");
+    assert.strictEqual(result.group.status, "archived", "返回值应反映解散后的状态");
+
+    const msgs = await svc.messageStore.loadMessages(group.id);
+    assert.ok(msgs.some(m => m.payload.text.includes("群聊成员不足 3 人，已自动解散")), "应有解散系统消息");
+    assert.ok(
+      broadcasts.some(b => b.type === "group_event" && b.payload.action === "group_dissolved"),
+      "应广播 group_dissolved"
+    );
+  });
+
+  it("边界：archived 群 / 目标不在群内 / 操作者非成员", async () => {
+    const reg = makeRegistry();
+    const activeGroup = await reg.create({ name: "活跃群", members: ["a1", "a2", "a3"] });
+    const archivedGroup = await reg.create({ name: "归档群", members: ["a1", "a2", "a3"] });
+    await reg.archive(archivedGroup.id);
+
+    const svc = makeService({ agentStatusMap: AGENTS, broadcasts: [], sends: [] });
+    await svc.init();
+
+    // archived 群踢人 → group_archived
+    const r1 = await svc.removeMembersFromGroup({ groupId: archivedGroup.id, actorId: "user", memberIds: ["a1"] });
+    assert.strictEqual(r1.error, "group_archived");
+
+    // 目标不在群内 → no_members_to_remove
+    const r2 = await svc.removeMembersFromGroup({ groupId: activeGroup.id, actorId: "user", memberIds: ["a4"] });
+    assert.strictEqual(r2.error, "no_members_to_remove");
+
+    // root/user 不可被移出 → no_members_to_remove
+    const r3 = await svc.removeMembersFromGroup({ groupId: activeGroup.id, actorId: "user", memberIds: ["root", "user"] });
+    assert.strictEqual(r3.error, "no_members_to_remove");
+
+    // 操作者非成员且非 user → not_member
+    const r4 = await svc.removeMembersFromGroup({ groupId: activeGroup.id, actorId: "outsider", memberIds: ["a1"] });
+    assert.strictEqual(r4.error, "not_member");
+  });
+});
+
 describe("GroupChatService — _serializeGroup 归档与退出成员", () => {
   function makeService(agentStatusMap) {
     return new GroupChatService({
@@ -290,5 +427,23 @@ describe("GroupChatService — _serializeGroup 归档与退出成员", () => {
       ]
     );
     assert.strictEqual(out.memberCount, 1, "memberCount 只计活跃成员");
+  });
+
+  it("includeMembers 序列化：kicked 退出原因应映射为 status=kicked", () => {
+    const svc = makeService(new Map([
+      ["a1", { name: "活跃1", status: "active" }],
+      ["a2", { name: "被踢者", status: "active" }]
+    ]));
+    const out = svc._serializeGroup({
+      id: "g1", name: "群", description: "", members: ["a1"],
+      exitedMembers: [
+        { id: "a2", leftAt: "2026-08-25 10:00:00", reason: "kicked" }
+      ],
+      createdAt: "", updatedAt: "", status: "active",
+      lastMessageAt: "", lastMessagePreview: ""
+    }, { includeMembers: true });
+
+    const kicked = out.members.find(m => m.id === "a2");
+    assert.strictEqual(kicked.status, "kicked");
   });
 });
