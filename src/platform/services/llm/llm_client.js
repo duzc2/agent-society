@@ -44,7 +44,8 @@ export class LlmClient {
     });
     this._augmentService = new LlmAugmentService({
       exchangeState: this._exchangeState,
-      resolveStreamFlag: this._resolveStreamFlag.bind(this)
+      resolveStreamFlag: this._resolveStreamFlag.bind(this),
+      log: this.log
     });
     this._fetchService = new LlmFetchService({
       log: this.log,
@@ -709,7 +710,9 @@ export class LlmClient {
                           ...(config.thinking.effort ? { output_config: { effort: config.thinking.effort } } : {})
                         }
                       }
-                    : { openai: { reasoningEffort: "medium", ...(config.thinking.budgetTokens ? { maxReasoningTokens: config.thinking.budgetTokens } : {}) } }
+                    // effort 优先取配置值（如 z.ai glm 只接受 low/high/max），
+                    // 未配置时回退 medium 以兼容 OpenAI 官方 API。
+                    : { openai: { reasoningEffort: config.thinking.effort ?? "medium", ...(config.thinking.budgetTokens ? { maxReasoningTokens: config.thinking.budgetTokens } : {}) } }
                 }
               : {}),
             abortSignal: signal,

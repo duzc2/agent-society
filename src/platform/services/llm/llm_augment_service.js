@@ -14,11 +14,16 @@ const INTERNAL_REQUEST_AUGMENTATION_HEADER = "x-agent-society-request-augmentati
 
 export class LlmAugmentService {
   /**
-   * @param {{ exchangeState: import("./client_exchange_state.js").ClientExchangeState, resolveStreamFlag: (config: any) => boolean }} deps
+   * @param {{
+   *   exchangeState: import("./client_exchange_state.js").ClientExchangeState,
+   *   resolveStreamFlag: (config: any) => boolean,
+   *   log: Logger
+   * }} deps
    */
-  constructor({ exchangeState, resolveStreamFlag }) {
+  constructor({ exchangeState, resolveStreamFlag, log }) {
     this._exchangeState = exchangeState;
     this._resolveStreamFlag = resolveStreamFlag;
+    this._log = log;
   }
 
   /**
@@ -246,7 +251,94 @@ export class LlmAugmentService {
       }
 
       return changed ? JSON.stringify(parsedBody) : requestBody;
-    } catch {
+    } catch (error) {
+      // JSON 解析失败等异常必须记录日志，不能静默吞掉；回退为原始请求体
+      void this._log.error("请求体注入助手工具推理失败，回退为原始请求体", {
+        requestUrl,
+        errorMessage: error?.message ?? String(error),
+        stack: error?.stack ?? null
+      });
+      return requestBody;
+    }
+  }
+
+  /**
+   * 判断是否应对该请求 URL 注入 thinking 字段。
+   * 仅作用于 OpenAI Chat Completions 协议；Anthropic Messages API 与
+   * OpenAI Responses API 由 providerOptions/ai-sdk 自行管理，不注入。
+   * @param {string} requestUrl
+   * @returns {boolean}
+   */
+  shouldInjectThinkingForRequest(requestUrl) {
+    if (typeof requestUrl !== "string" || requestUrl.length === 0) {
+      return false;
+    }
+    return /\/chat\/completions(?:\?|$)/i.test(requestUrl);
+  }
+
+  /**
+   * 判断配置是否要求向 OpenAI 兼容请求体注入 thinking 字段。
+   * 仅在 provider 为 openai（含默认值）且 thinking.type === "enabled" 时生效，
+   * 避免 anthropic / open-responses 等其他协议收到不支持的字段。
+   * @param {any} config - LLM 服务配置
+   * @returns {boolean}
+   */
+  shouldInjectThinkingForConfig(config) {
+    const provider = config?.provider ?? "openai";
+    if (provider !== "openai") {
+      return false;
+    }
+    return config?.thinking?.type === "enabled";
+  }
+
+  /**
+   * 将 thinking 字段注入 OpenAI 兼容请求体。
+   *
+   * 背景：部分 OpenAI 兼容服务（如 z.ai 的 glm 系列）要求请求体携带
+   * `"thinking": {"type":"enabled"}` 才开启深度思考，该字段是非标准的
+   * OpenAI 字段，ai-sdk 的 providerOptions 无法传递，因此在此处注入。
+   * @param {string} requestUrl
+   * @param {any} requestBody - 可能是字符串的 JSON 请求体，也可能为空
+   * @param {any} config - LLM 服务配置
+   * @returns {any} 注入后的请求体；不满足注入条件时原样返回
+   */
+  injectThinkingIntoRequestBody(requestUrl, requestBody, config) {
+    if (!this.shouldInjectThinkingForRequest(requestUrl) || requestBody == null) {
+      return requestBody;
+    }
+    if (!this.shouldInjectThinkingForConfig(config)) {
+      return requestBody;
+    }
+    if (typeof requestBody !== "string") {
+      return requestBody;
+    }
+
+    const trimmedBody = requestBody.trim();
+    if (!trimmedBody) {
+      return requestBody;
+    }
+
+    try {
+      const parsedBody = JSON.parse(trimmedBody);
+      if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) {
+        return requestBody;
+      }
+      // 已有 thinking 配置时尊重 ai-sdk/provider 已写入的值，避免覆盖
+      if (parsedBody.thinking !== undefined) {
+        return requestBody;
+      }
+
+      return JSON.stringify({
+        ...parsedBody,
+        thinking: { type: "enabled" }
+      });
+    } catch (error) {
+      // JSON 解析失败等异常必须记录日志，不能静默吞掉；回退为原始请求体
+      void this._log.error("请求体注入 thinking 字段失败，回退为原始请求体", {
+        requestUrl,
+        errorMessage: error?.message ?? String(error),
+        stack: error?.stack ?? null
+      });
       return requestBody;
     }
   }

@@ -127,9 +127,16 @@ export class LlmFetchService {
         options?.body,
         config
       );
-      const augmentedRequestBody = self._augmentService.injectAssistantToolReasoningIntoRequestBody(
+      // 向 OpenAI 兼容服务注入 thinking 字段（如 z.ai glm 系列），需在
+      // reasoning 注入之前完成，两者作用于请求体不同字段互不干扰。
+      const thinkingInjectedRequestBody = self._augmentService.injectThinkingIntoRequestBody(
         requestUrl,
         streamInjectedRequestBody,
+        config
+      );
+      const augmentedRequestBody = self._augmentService.injectAssistantToolReasoningIntoRequestBody(
+        requestUrl,
+        thinkingInjectedRequestBody,
         requestAugmentation
       );
       // 用动态计算的输出上限覆盖 ai-sdk 内部的默认值（如 Anthropic provider

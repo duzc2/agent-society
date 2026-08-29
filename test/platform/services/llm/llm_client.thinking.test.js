@@ -252,8 +252,35 @@ describe("LlmClient thinking budget", () => {
     });
   });
 
-  it("UI 用户只设置 type=enabled 不填 budgetTokens → 预算为 16000", async () => {
-    // Simulates a user who toggles thinking in the UI and leaves the budget field blank,
+  it("openai provider + thinking.effort=high → reasoningEffort 传递配置值", async () => {
+    // z.ai glm 系列只接受 low/high/max，写死 medium 会触发错误 1210
+    const client = new LlmClient({
+      configService: createConfigService({ type: "enabled", effort: "high" }, { provider: "openai" }),
+      serviceId: "test-model",
+      logger: makeTestLogger("LlmClient.thinking")
+    });
+
+    await client.chat({ messages: [{ role: "user", content: "hello" }] });
+
+    const openai = getOpenAiProviderOptions();
+    assert.deepStrictEqual(openai, { reasoningEffort: "high" });
+  });
+
+  it("openai provider + thinking 无 effort → reasoningEffort 回退 medium", async () => {
+    // 兼容 OpenAI 官方 API：未配置 effort 时保持原有 medium 行为
+    const client = new LlmClient({
+      configService: createConfigService({ type: "enabled" }, { provider: "openai" }),
+      serviceId: "test-model",
+      logger: makeTestLogger("LlmClient.thinking")
+    });
+
+    await client.chat({ messages: [{ role: "user", content: "hello" }] });
+
+    const openai = getOpenAiProviderOptions();
+    assert.deepStrictEqual(openai, { reasoningEffort: "medium" });
+  });
+
+  it("UI 用户只设置 type=enabled 不填 budgetTokens → 预算为 16000", async () => {    // Simulates a user who toggles thinking in the UI and leaves the budget field blank,
     // resulting in the thinking config being { type: "enabled" } without budgetTokens.
     const client = new LlmClient({
       configService: createConfigService({ type: "enabled" }),
