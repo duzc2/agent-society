@@ -34,7 +34,10 @@ process.on('uncaughtException', (error) => {
 
 process.on('unhandledRejection', (reason) => {
   const err = reason instanceof Error ? reason : null;
-  bootLog('ERROR', '未处理Promise拒绝', { reason: err?.message ?? String(reason) });
+  bootLog('ERROR', '未处理Promise拒绝', { reason: err?.message ?? String(reason), stack: err?.stack?.substring(0, 2000) });
+  // 与 uncaughtException 同等对待：此阶段尚无 ShutdownManager，无法优雅关机，
+  // 但绝不能吞掉拒绝继续运行——否则进程会带着损坏状态变成僵尸
+  process.exit(1);
 });
 
 // 启动

@@ -122,9 +122,8 @@ export class BootstrapManager {
       r.systemWorkspacePrompt = "";
       void r.log.debug("工作空间提示词文件不存在，跳过加载");
     }
-    // 全局重试协调器，供 LlmClient 和 ComputeScheduler 共用
-    const { RetryCoordinator } = await import("./retry_coordinator.js");
-    r._retryCoordinator = new RetryCoordinator();
+    // 全局重试协调器已在 Runtime 构造函数中创建（ComputeScheduler 构造函数会按值捕获它），
+    // 此处直接复用，供 LlmClient 共用
     r.llm = r.config.llm ? new LlmClient({
       configService: r._configService,
       logger: r.loggerRoot.forModule("llm"),

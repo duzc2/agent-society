@@ -424,12 +424,26 @@ export class ShutdownManager {
     };
     process.on('uncaughtException', this._uncaughtExceptionHandler);
 
-    // 未处理Promise拒绝
+    // 未处理Promise拒绝（与 uncaughtException 同等对待：记录完整堆栈并优雅关机。
+    // 只记录不退出会让进程带着损坏的内部状态继续运行，形成"僵尸进程"）
     this._unhandledRejectionHandler = (reason) => {
       const err = reason instanceof Error ? reason : null;
-      this._recordExitEvent('UNHANDLED_REJECTION', {
-        reason: err?.message ?? String(reason)
+      void this.runtime.log.error("[ShutdownManager] 未处理Promise拒绝", {
+        reason: err?.message ?? String(reason),
+        name: err?.name ?? null,
+        stack: err?.stack ?? null
       });
+      this._recordExitEvent('UNHANDLED_REJECTION', {
+        reason: err?.message ?? String(reason),
+        stack: err?.stack ?? null
+      });
+      if (!this._isShuttingDown) {
+        this._shutdown('unhandledRejection').then(() => {
+          process.exit(1);
+        }).catch(() => {
+          process.exit(1);
+        });
+      }
     };
     process.on('unhandledRejection', this._unhandledRejectionHandler);
 

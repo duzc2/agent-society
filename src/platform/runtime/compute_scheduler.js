@@ -587,6 +587,26 @@ export class ComputeScheduler {
 
     if (!outcome || outcome.kind === "noop") {
       if (this.turnEngine.hasRunnable(agentId)) {
+        // 【孤儿回合保护】step() 对存在的 activeTurn 返回 noop，说明回合卡在
+        // 等待阶段（waiting_llm / dispatch_tools）。而 llm/tool 的 inFlight 已在
+        // 函数开头拦截（有 in-flight 时根本不会进入这里）——即不会再有任何
+        // 异步结果回来推进它。若照旧 _markReady 重新入队，step() 将永远返回
+        // noop，形成调度死循环。必须强制终结回合，让状态机回到 idle。
+        const orphanTurn = this.turnEngine._byAgentId.get(agentId)?.activeTurn ?? null;
+        void this.runtime.log.error("[ComputeScheduler] 检测到孤儿回合（noop 但回合仍在等待且无 in-flight LLM/tool），强制终结", {
+          agentId,
+          turnId: orphanTurn?.turnId ?? null,
+          phase: orphanTurn?.phase ?? null,
+          round: orphanTurn?.round ?? null,
+          inflightKind: this._inFlight.get(agentId)?.kind ?? null
+        });
+        this.turnEngine.onLlmError(agentId, {
+          turnId: orphanTurn?.turnId,
+          stepId: orphanTurn?.lastStepId ?? 0,
+          error: new Error("回合卡在等待阶段且无 in-flight LLM/tool 调用，被调度器强制终结（孤儿回合保护）")
+        });
+        this.runtime._state.setAgentComputeStatus(agentId, "idle");
+        this.runtime._state.setAgentComputePhase(agentId, null);
         this._markReady(agentId);
       } else {
         this._maybeSetIdle(agentId);
@@ -816,7 +836,29 @@ export class ComputeScheduler {
         const errCategory = this._classifyLlmError(err);
         if (this._isRetryableError(errCategory)) {
           // 进入重试流程（异步等待，.finally() 将在重试结束后执行）
-          await this._retryLlmCall(agentId, outcome, cancelScope, llmClient, 1, err);
+          // 【兜底】这条 promise 链是 fire-and-forget，重试流程自身若再抛异常
+          // 只会变成未处理拒绝，onLlmError 永远不会执行，turn 将永久卡死在
+          // waiting_llm 并让调度器陷入 noop 重入队死循环。必须在此终结回合。
+          try {
+            await this._retryLlmCall(agentId, outcome, cancelScope, llmClient, 1, err);
+          } catch (retryFlowErr) {
+            void this.runtime.log.error("[ComputeScheduler] LLM 重试流程自身失败，强制终结回合", {
+              agentId,
+              turnId: outcome.turnId,
+              stepId: outcome.stepId,
+              retryCount: 1,
+              retryFlowError: retryFlowErr?.message ?? String(retryFlowErr ?? ""),
+              retryFlowStack: retryFlowErr?.stack,
+              retryFlowName: retryFlowErr?.name,
+              originalError: err?.message ?? String(err ?? "")
+            });
+            if ((this.runtime._cancelManager.getEpoch(agentId) ?? epoch) !== epoch) return;
+            if (!this.runtime._agents.has(agentId)) return;
+            this.turnEngine.onLlmError(agentId, { turnId: outcome.turnId, stepId: outcome.stepId, error: retryFlowErr });
+            this.runtime._state.setAgentComputeStatus(agentId, "idle");
+            this.runtime._state.setAgentComputePhase(agentId, null);
+            this._markReady(agentId);
+          }
           return;
         }
 

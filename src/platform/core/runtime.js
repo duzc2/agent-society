@@ -28,6 +28,7 @@ import { AgentMemoryManager } from "../services/agent_memory/agent_memory_manage
 import { LifecycleRegistry } from "../runtime/resource_lifecycle.js";
 import { KnowledgeTreeSystem } from "../services/knowledge_tree/knowledge_tree_system.js";
 import { ComputeScheduler } from "../runtime/compute_scheduler.js";
+import { RetryCoordinator } from "../runtime/retry_coordinator.js";
 import { Agent } from "../../agents/agent.js";
 import { BootstrapManager } from "../runtime/bootstrap_manager.js";
 import { ReplyManager } from "../runtime/reply_manager.js";
@@ -225,6 +226,9 @@ export class Runtime {
     this._llm = new RuntimeLlm(this);
     /** @type {AgentCancelManager} 智能体取消/停止信号管理器 */
     this._cancelManager = new AgentCancelManager({ logger: this.log });
+    /** @type {RetryCoordinator} 全局重试协调器（供 LlmClient 和 ComputeScheduler 共用）。
+     *  必须在 ComputeScheduler 构造之前创建：其构造函数会按值捕获 runtime._retryCoordinator。 */
+    this._retryCoordinator = new RetryCoordinator();
     /** @type {TurnEngine} 回合引擎（协程式） */
     this._turnEngine = new TurnEngine(this);
     /** @type {ComputeScheduler} 协程式计算调度器 */
