@@ -58,6 +58,11 @@ import "./mood_routes.js";
 import "../../group_chat/group_chat_service.js";
 // group-chat routes now auto-registered via registry.declare()
 import "../../group_chat/group_routes.js";
+// proc-messaging routes now auto-registered via registry.declare()（服务器进程消息协议，P4）
+import "../../../services/proc_messaging/proc_message_routes.js";
+import "../../../services/proc_messaging/proc_message_channel_routes.js";
+// proc HTTP bridge routes（网页页面 ⇄ 服务器进程桥接：页面经框架端口 fetch 进程，进程零端口）
+import "../../../services/proc_messaging/proc_http_bridge_routes.js";
 
 /**
  * HTTP服务器组件：提供REST API接口与Agent Society交互。
@@ -93,6 +98,7 @@ import "../../group_chat/group_routes.js";
  * - GET /api/workspaces/:workspaceId/meta - 获取工作空间元信息
  * - GET /web/* - 静态文件服务
  * - GET /workspace-files/:workspaceId/:filePath - 工作空间文件服务
+ * - ANY /api/proc-http/:procName/* - 网页页面 ⇄ 服务器进程 HTTP 桥接（页面经框架端口 fetch 进程，进程零端口）
  */
 export class HTTPServer {
 

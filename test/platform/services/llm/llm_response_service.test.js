@@ -161,3 +161,50 @@ describe("LlmResponseService.normalizeUsage", () => {
     assert.strictEqual(result.cachedInputTokens, 0);
   });
 });
+
+describe("LlmResponseService.buildAssistantMessage — 响应体自愈防御", () => {
+  it("text 被填入完整 Anthropic 响应体时 → 提取真实 text 块（真实故障样例）", () => {
+    const brokenText = JSON.stringify({
+      id: "msg_20260903073715",
+      type: "message",
+      role: "assistant",
+      model: "glm-5.3-flash",
+      content: [
+        { type: "thinking", thinking: "内部思考……", signature: "sig-abc" },
+        { type: "text", text: "```js\nproc.notifyWeb(\"progress\", { percent: 50 });\n```" }
+      ],
+      stop_reason: "end_turn",
+      usage: { input_tokens: 10, output_tokens: 20 }
+    });
+    const msg = svc.buildAssistantMessage({ text: brokenText });
+    assert.strictEqual(
+      msg.content,
+      '```js\nproc.notifyWeb("progress", { percent: 50 });\n```'
+    );
+  });
+
+  it("多个 text 块 → 按序拼接", () => {
+    const brokenText = JSON.stringify({
+      type: "message",
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "x" },
+        { type: "text", text: "第一段" },
+        { type: "text", text: "第二段" }
+      ]
+    });
+    const msg = svc.buildAssistantMessage({ text: brokenText });
+    assert.strictEqual(msg.content, "第一段第二段");
+  });
+
+  it("模型正常输出的 JSON 文本（非响应体结构）→ 原样保留", () => {
+    const normalJson = JSON.stringify({ type: "custom", result: 42, note: "{\"role\":\"assistant\"}" });
+    const msg = svc.buildAssistantMessage({ text: normalJson });
+    assert.strictEqual(msg.content, normalJson);
+  });
+
+  it("普通文本 → 原样保留", () => {
+    const msg = svc.buildAssistantMessage({ text: "普通回复" });
+    assert.strictEqual(msg.content, "普通回复");
+  });
+});

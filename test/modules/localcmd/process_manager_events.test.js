@@ -86,6 +86,10 @@ describe("ProcessManager — 进程事件订阅 API", () => {
           register: (entry) => registeredCleanups.push(entry),
           unregister: async () => {},
         },
+        procMessageHub: {
+          getPort: () => 0,
+          registerSpawn: () => ({ ok: true }),
+        },
       },
       dataDir: testDataDir,
     });
@@ -270,10 +274,12 @@ describe("ProcessManager — 进程事件订阅 API", () => {
   it("集成推送时序：批量推送（intervalMs 注入）与退出立即推送", {
     timeout: 15000
   }, async () => {
-    // 真实子进程 + ProcessEventPusher（intervalMs=200 注入，替代 30s 默认值）
-    // 脚本：t≈0 输出 'a'，t≈300ms 输出 'b'，t≈700ms 退出
-    // 预期：a 到达 → 200ms 后第 1 条（含 a 不含 b）；b 到达 → 200ms 后第 2 条（含 b）；
+    // 真实子进程 + ProcessEventPusher（intervalMs=1000 注入，替代 30s 默认值）
+    // 脚本：t≈0 输出 'a'，t≈3000ms 输出 'b'，t≈5500ms 退出
+    // 预期：a 到达 → 1000ms 后第 1 条（含 a 不含 b）；b 到达 → 1000ms 后第 2 条（含 b）；
     //       exit → 立即第 3 条（含结束事件）；之后无第 4 条
+    // 余量说明：全量套件高负载下子进程启动可超过 1s（先前 200ms 窗口偶发失败），
+    // 所有时间余量同比放大，断言语义不变。
     const sent = [];
     const pusher = new ProcessEventPusher({
       runtime: {
@@ -285,14 +291,14 @@ describe("ProcessManager — 进程事件订阅 API", () => {
         }
       },
       log: makeTestLogger("PM-Push"),
-      intervalMs: 200
+      intervalMs: 1000
     });
     const unsubscribe = pm.onProcessEvent((evt) => pusher.onEvent(evt));
 
     try {
       const result = await pm.spawn("node", [
         "-e",
-        "console.log('a'); setTimeout(()=>{console.log('b');},300); setTimeout(()=>process.exit(0),700)"
+        "console.log('a'); setTimeout(()=>{console.log('b');},3000); setTimeout(()=>process.exit(0),5500)"
       ], { agentId: "agent-1" });
       assert.strictEqual(result.ok, true);
 

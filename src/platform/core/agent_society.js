@@ -352,6 +352,10 @@ export class AgentSociety {
       
       if (result.ok) {
         void this.log.info("HTTP服务器启动成功", { port: result.port });
+        // 服务器进程通道的 base URL（用户配置端口启动后的实际值）。
+        // 挂 runtime 供 spawn 注入进程环境变量——端口唯一来源是用户配置，框架自动传递，
+        // 智能体与进程代码均不感知具体端口（进程消息协议 HTTP 化传输的前提）
+        this.runtime.httpBaseUrl = `http://127.0.0.1:${result.port}`;
         return result;
       } else {
         // HTTP服务器启动失败，抛出异常

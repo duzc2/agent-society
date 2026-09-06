@@ -89,24 +89,36 @@ class UiCommandService {
     /**
      * 执行 JavaScript 代码
      *
-     * 在页面上下文中执行，具有完整的 window/document 访问权限
+     * 在页面上下文中执行，具有完整的 window/document 访问权限。
+     * 额外注入 __notify(text) 闭包（A 通道）：脚本可向执行智能体发页面通知，
+     * 经服务端 notify-agent 进智能体会话（插话/新回合 + 持久化）。零全局变量。
      */
-    private executeEvalJs(payload: { script: string }): CommandResult {
+    private executeEvalJs(payload: { script: string; _ws?: string | null }): CommandResult {
         const script = payload?.script;
 
         if (typeof script !== 'string') {
             return { ok: false, error: 'Missing or invalid script parameter' };
         }
 
+        const agentId = payload?._ws ?? null;
+        const __notify = (text: unknown): void => {
+            const body = typeof text === 'string' ? text : String(text ?? '');
+            fetch('/api/modules/ui_page/notify-agent', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ agentId, text: body })
+            }).catch(err => console.error('[UiCommandService] __notify 发送失败:', err));
+        };
+
         // 创建函数并执行，传入 window 对象以确保最大权限
-        const fn = new Function('window', 'document', `
+        const fn = new Function('window', 'document', '__notify', `
             "use strict";
             return (async () => {
                 ${script}
             })();
         `);
 
-        const result = fn(window, document);
+        const result = fn(window, document, __notify);
 
         // 处理 Promise 返回值
         if (result && typeof result === 'object' && typeof result.then === 'function') {
@@ -319,6 +331,13 @@ class UiCommandService {
         const cmd = message.payload;
         if (!cmd || !cmd.type) return;
 
+        // B1 通知命令：fire-and-forget，无结果回传，以 CustomEvent 分发给页面监听者
+        if (cmd.type === 'notify') {
+            console.log('[UiCommandService] 收到通知:', message.messageId);
+            window.dispatchEvent(new CustomEvent('agent-notify', { detail: cmd.payload ?? {} }));
+            return;
+        }
+
         const command: UiCommand = {
             id: String(message.messageId),
             type: cmd.type,
@@ -371,10 +390,11 @@ class UiCommandService {
     /**
      * 执行 JavaScript 代码（公开方法，供文件查看器等组件调用）
      * @param script 要执行的 JavaScript 代码
+     * @param agentId 执行智能体 id（可选；供脚本内 __notify 定位通知目标）
      * @returns 执行结果
      */
-    executeScript(script: string): Promise<{ ok: boolean; result?: any; error?: string }> {
-        const commandResult = this.executeEvalJs({ script });
+    executeScript(script: string, agentId: string | null = null): Promise<{ ok: boolean; result?: any; error?: string }> {
+        const commandResult = this.executeEvalJs({ script, _ws: agentId });
 
         // 如果返回的是 Promise（异步代码），等待其完成
         if (commandResult instanceof Promise) {
@@ -408,7 +428,7 @@ class UiCommandService {
             // 顺序执行：保证脚本间 DOM 副作用顺序可见（前一个脚本建的元素可被后一个脚本操作）
             for (const s of data.scripts ?? []) {
                 try {
-                    await this.executeScript(s.script);
+                    await this.executeScript(s.script, s.workspaceId ?? null);
                 } catch (err) {
                     console.error('[UiCommandService] 自动加载脚本执行失败:', s.path, err);
                 }

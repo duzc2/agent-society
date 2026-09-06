@@ -10,7 +10,7 @@
  * 
  * @author Agent Society
  */
-import { ref, onMounted, watch, computed } from 'vue';
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { apiService, type ModuleInfo } from '../../services/api';
 import { 
   Puzzle, 
@@ -285,7 +285,23 @@ const handleResize = () => {
 onMounted(() => {
   loadModules();
   window.addEventListener('resize', handleResize);
+  // 心跳派生事件（proc-event/agent-notify）转发进面板 iframe：
+  // CustomEvent 不跨 iframe 边界，主窗口分发后需手动投递到 contentWindow
+  window.addEventListener('proc-event', forwardEventToIframe);
+  window.addEventListener('agent-notify', forwardEventToIframe);
 });
+
+onUnmounted(() => {
+  window.removeEventListener('resize', handleResize);
+  window.removeEventListener('proc-event', forwardEventToIframe);
+  window.removeEventListener('agent-notify', forwardEventToIframe);
+});
+
+/** 把主窗口心跳派生事件原样转发到当前面板 iframe */
+function forwardEventToIframe(e: Event) {
+  const iframe = document.getElementById('module-iframe') as HTMLIFrameElement | null;
+  iframe?.contentWindow?.dispatchEvent(new CustomEvent(e.type, { detail: (e as CustomEvent).detail }));
+}
 
 defineExpose({
   toggle,

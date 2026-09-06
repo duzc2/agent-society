@@ -342,6 +342,79 @@ export class LlmAugmentService {
       return requestBody;
     }
   }
+
+  /**
+   * 判断是否应对该请求 URL 修补响应体中的 thinking 块。
+   * 仅作用于 Anthropic Messages API 的非流式 JSON 响应。
+   * @param {string} requestUrl
+   * @returns {boolean}
+   */
+  shouldRepairThinkingSignatureForRequest(requestUrl) {
+    if (typeof requestUrl !== "string" || requestUrl.length === 0) {
+      return false;
+    }
+    return /\/messages(?:\?|$)/i.test(requestUrl);
+  }
+
+  /**
+   * 给响应体中缺失 signature 的 thinking 块补占位签名。
+   *
+   * 背景：ai-sdk 的 Anthropic 非流式响应 schema 要求 thinking 块必须携带
+   * signature 字段（官方协议由 thinking 引擎签发），而部分模型经代理
+   * （真实故障样例：glm-5.3-flash 经 ccswitch 本地代理）返回的 thinking 块
+   * 只有 {type, thinking} 两个键。schema 校验失败会被 ai-sdk 统一包装为
+   * "Invalid JSON response"，导致整次调用重试直至失败。
+   * 占位签名仅用于通过本地 schema 校验；本项目把 thinking 内容作为
+   * reasoning_content 使用，签名不会被回传给模型服务校验。
+   * @param {string} requestUrl
+   * @param {string} responseBody - 响应体文本
+   * @returns {{body: string, repairedCount: number}} 修补结果；未修补时 repairedCount 为 0
+   */
+  repairThinkingSignatureInResponseBody(requestUrl, responseBody) {
+    if (!this.shouldRepairThinkingSignatureForRequest(requestUrl)) {
+      return { body: responseBody, repairedCount: 0 };
+    }
+    if (typeof responseBody !== "string" || responseBody.trim() === "") {
+      return { body: responseBody, repairedCount: 0 };
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(responseBody);
+    } catch (error) {
+      // 2xx 响应体不是 JSON（如代理返回错误页）必须记录日志，不能静默吞掉；回退为原始响应体
+      void this._log.error("修补响应体 thinking 签名失败（响应体非 JSON），回退为原始响应体", {
+        requestUrl,
+        responseBodyPreview: responseBody.slice(0, 500),
+        errorMessage: error?.message ?? String(error),
+        stack: error?.stack ?? null
+      });
+      return { body: responseBody, repairedCount: 0 };
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { body: responseBody, repairedCount: 0 };
+    }
+    if (!Array.isArray(parsed.content)) {
+      return { body: responseBody, repairedCount: 0 };
+    }
+
+    let repairedCount = 0;
+    for (const block of parsed.content) {
+      if (block?.type !== "thinking" || typeof block.thinking !== "string") {
+        continue;
+      }
+      if (typeof block.signature === "string") {
+        continue;
+      }
+      block.signature = "placeholder:missing-from-provider";
+      repairedCount++;
+    }
+    if (repairedCount === 0) {
+      return { body: responseBody, repairedCount: 0 };
+    }
+
+    return { body: JSON.stringify(parsed), repairedCount };
+  }
 }
 
 export { INTERNAL_REQUEST_AUGMENTATION_HEADER };

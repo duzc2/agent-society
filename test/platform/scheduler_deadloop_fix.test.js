@@ -437,3 +437,98 @@ describe("端到端复现: 生产死循环因果链（真实 TurnEngine + 真实
     assert.strictEqual(statusMap.get("agent-1"), "idle");
   });
 });
+
+// ==================== 修复 4：onLlmResult 必须先于 _markReady 完成（孤儿保护竞态） ====================
+
+/**
+ * 背景（2026-09-03 生产日志 20260903-233409）：
+ *   137 轮长回合中，LLM then 链调用 onLlmResult（async，内部做消息持久化）后未 await
+ *   就 _markReady 重新入队。调度器并发进入 step() 时 turn.phase 仍是 waiting_llm →
+ *   step() 返回 noop → 孤儿保护误判（inflightKind=null：llm 已结束、turning 已清）→
+ *   正常推进中的回合被强制终结。
+ *
+ * 修复：LLM/工具 then 链中 await onLlmResult / onToolResult 后再 _markReady。
+ */
+describe("修复4: onLlmResult 必须在 _markReady 前完成（孤儿保护竞态）", () => {
+  it("onLlmResult 慢异步完成前不得触发 _markReady", async () => {
+    let onLlmResultPending = 0;
+    const markReadySnapshots = [];
+    const mockRuntime = createMockRuntime({
+      bus: { drainAll: () => [], receiveNext: () => null, hasPending: () => false, waitForMessage: async () => {}, send: () => {}, getQueueDepth: () => 0 }
+    });
+    const mockTurnEngine = createMockTurnEngine({
+      onLlmResult: async () => {
+        onLlmResultPending++;
+        // 模拟 onLlmResult 内部的持久化 IO（真实事故中这几十毫秒就是竞态窗口）
+        await new Promise((r) => setTimeout(r, 50));
+        onLlmResultPending--;
+      },
+      _byAgentId: new Map([
+        ["agent-1", { activeTurn: { turnId: "t-race", phase: "dispatch_tools", round: 2, lastStepId: 9 }, queue: [] }]
+      ])
+    });
+    const scheduler = new ComputeScheduler(mockRuntime, mockTurnEngine);
+    const originalMarkReady = scheduler._markReady.bind(scheduler);
+    scheduler._markReady = (agentId) => {
+      markReadySnapshots.push(onLlmResultPending);
+      originalMarkReady(agentId);
+    };
+
+    mockRuntime.getLlmClientForAgent = async () => ({
+      _ensureInitialized: async () => {},
+      chat: async () => ({ role: "assistant", content: "ok" })
+    });
+
+    await scheduler._startLlm(
+      "agent-1",
+      { turnId: "t-race", stepId: 9, ctx: {}, request: { messages: [{ role: "user", content: "hi" }] }, supportsToolCalling: true },
+      null
+    );
+    await flushMicrotasks(10);
+    await new Promise((r) => setTimeout(r, 80));
+
+    assert.ok(markReadySnapshots.length >= 1, "主链应触发 _markReady");
+    assert.strictEqual(
+      markReadySnapshots[0], 0,
+      "_markReady 触发时 onLlmResult 必须已完成（修复前 pending=1：调度器并发 step() 看到 waiting_llm 旧状态返回 noop，孤儿保护误杀回合）"
+    );
+  });
+
+  it("onToolResult 慢异步完成前不得走到链尾（finally）", async () => {
+    let onToolResultPending = 0;
+    const persistSnapshots = [];
+    const mockRuntime = createMockRuntime({
+      executeToolCall: async () => "tool-ok",
+      bus: { drainAll: () => [], receiveNext: () => null, hasPending: () => false, waitForMessage: async () => {}, send: () => {}, getQueueDepth: () => 0 },
+      _conversationManager: {
+        persistConversation: () => persistSnapshots.push(onToolResultPending),
+        buildContextStatusPrompt: async () => null
+      },
+      unmarkAgentAsActivelyProcessing: () => {}
+    });
+    const mockTurnEngine = createMockTurnEngine({
+      onToolResult: async () => {
+        onToolResultPending++;
+        await new Promise((r) => setTimeout(r, 50));
+        onToolResultPending--;
+      }
+    });
+    const scheduler = new ComputeScheduler(mockRuntime, mockTurnEngine);
+
+    // _startTool 为 fire-and-forget（无返回值），以链尾 finally 中的 persistConversation
+    // 为观察点：修复前 onToolResult 未 await，finally 执行时 pending=1；修复后为 0
+    scheduler._startTool(
+      "agent-1",
+      { turnId: "t-tool", stepId: 2, ctx: {}, call: { callId: "c1", name: "localcmd_list", arguments: "{}" } },
+      null
+    );
+
+    await new Promise((r) => setTimeout(r, 80));
+    await flushMicrotasks(6);
+    assert.ok(persistSnapshots.length >= 1, "工具链应走到链尾");
+    assert.strictEqual(
+      persistSnapshots[0], 0,
+      "链尾执行时 onToolResult 必须已完成（修复前未 await，调度器可能在 dispatch_tools 旧状态下并发推进）"
+    );
+  });
+});

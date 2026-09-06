@@ -44,6 +44,10 @@ describe("ProcessManager — lifecycle & error handling", () => {
           register: () => {},
           unregister: async () => {},
         },
+        procMessageHub: {
+          getPort: () => 0,
+          registerSpawn: () => ({ ok: true }),
+        },
       },
       dataDir: testDataDir,
     });

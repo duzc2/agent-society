@@ -9,7 +9,12 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import iconv from "iconv-lite";
+
+// 进程消息协议 SDK 的安装路径（spawn 注入 SOCIETY_PROC_SDK_URL，生成的进程代码按 URL 导入）
+const PROC_SDK_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../sdk/proc_client.js");
+const PROC_GLUE_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../sdk/proc_glue.mjs");
 
 // 日志文件名解析: <YYYY-MM-DD-HHMMSS>-<UUID>.log
 const LOG_FILENAME_RE = /^(\d{4}-\d{2}-\d{2}-\d{6})-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.log$/i;
@@ -411,15 +416,38 @@ export class ProcessManager {
       // 确保智能体子目录存在
       await this._ensureOutputDir(agentId);
 
+      // 消息中枢环境注入（进程消息协议，P3）：
+      // 进程内若使用 SDK（sdk/proc_client.js）会自动读取这些变量接入消息中枢；
+      // 未接入的进程忽略这些变量，行为与旧版完全一致（文本 stdout/stderr）。
+      // hub 为运行时必建组件（bootstrap_manager 随运行时启动），缺失即初始化错误（铁律：禁止空值兼容）
+      const procEnv = { ...process.env, ...env };
+      const messageToken = randomUUID();
+      this.runtime.procMessageHub.registerSpawn({ token: messageToken, agentId });
+      // 进程通道 base URL：框架 HTTP 服务启动后的实际地址（用户配置端口），框架自动传递——
+      // 智能体与进程代码均不感知具体端口；未启用 HTTP 时该值为 undefined，注入缺失会自然报错暴露
+      procEnv.SOCIETY_PROC_HTTP_URL = this.runtime.httpBaseUrl;
+      procEnv.SOCIETY_PROC_TOKEN = messageToken;
+      procEnv.SOCIETY_PROC_AGENT_ID = agentId; // SDK 兜底读取；归属最终由服务端按 token 解析
+      procEnv.SOCIETY_PROC_PROCESS_ID = processId; // SDK 握手时携带，使智能体可按 processId 寻址（无需知道进程 name）
+      // SDK 的可 import URL（file:// 形式）：生成的进程代码与平台 cwd 不同，动态 import 绝对路径
+      // 在 Windows 上会因盘符冒号抛 ERR_UNSUPPORTED_ESM_URL_SCHEME，必须以 URL 导入
+      procEnv.SOCIETY_PROC_SDK_URL = pathToFileURL(PROC_SDK_PATH).href;
+      // 胶水接入（可选）：spawn 传 procName 时注入，进程代码一行 import 即完成接入
+      // （glue 模块读 SOCIETY_PROC_NAME 建立连接并导出就绪的 proc）。未传则不注入，普通进程零影响
+      if (options.procName) {
+        procEnv.SOCIETY_PROC_NAME = String(options.procName);
+        procEnv.SOCIETY_PROC_GLUE_URL = pathToFileURL(PROC_GLUE_PATH).href;
+      }
+
       // 启动子进程
       const childProcess = spawn(command, args, {
-        env: { ...process.env, ...env },
+        env: procEnv,
         cwd,
         shell: false,
         stdio: ["pipe", "pipe", "pipe"] // stdin, stdout, stderr 都使用管道
       });
 
-      return await this._startManagedProcess(command, args, { processId, outputFile, agentId, pushEvents, childProcess });
+      return await this._startManagedProcess(command, args, { processId, outputFile, agentId, pushEvents, childProcess, messageToken });
     } catch (err) {
       return await this._handleStartFailure(err, processId, outputFile, command);
     }
@@ -472,7 +500,7 @@ export class ProcessManager {
    * @returns {{ok: boolean, processId: string}}
    * @private
    */
-  async _startManagedProcess(command, args, { processId, outputFile, agentId, pushEvents, childProcess }) {
+  async _startManagedProcess(command, args, { processId, outputFile, agentId, pushEvents, childProcess, messageToken }) {
     // 同步确保日志文件已创建：createWriteStream 的 open 是异步的，
     // 刚 spawn 后立即 readOutput / 历史读取会碰到 ENOENT 竞态
     fs.closeSync(fs.openSync(outputFile, "a"));
@@ -509,6 +537,7 @@ export class ProcessManager {
       exitCode: null,
       startupError: null,
       pushEvents,
+      messageToken,
       write: (data) => {
         if (childProcess.stdin && !childProcess.stdin.destroyed) {
           childProcess.stdin.write(data);
@@ -595,6 +624,14 @@ export class ProcessManager {
       }
 
       this.log.info("[ProcessManager] 进程结束", { processId, code, signal });
+      // 消息中枢 token 清理：进程退出，spawn 专属 token 随即失效（SDK 断线重连期间保留的语义见 hub.registerSpawn）
+      if (managedProcess.messageToken) {
+        try {
+          this.runtime.procMessageHub.unregisterToken(managedProcess.messageToken);
+        } catch (e) {
+          this.log.debug("[ProcessManager] 消息中枢 token 清理跳过", { processId, error: e?.message ?? String(e) });
+        }
+      }
       this._emitProcessEvent({
         processId,
         agentId,
@@ -617,6 +654,14 @@ export class ProcessManager {
       }
 
       this.log.error("[ProcessManager] 进程错误", { processId, error: err?.message });
+      // 启动失败同样清理 spawn token
+      if (managedProcess.messageToken) {
+        try {
+          this.runtime.procMessageHub.unregisterToken(managedProcess.messageToken);
+        } catch (e) {
+          this.log.debug("[ProcessManager] 消息中枢 token 清理跳过", { processId, error: e?.message ?? String(e) });
+        }
+      }
       // 启动失败的终端事件（close 事件在 startupError 早退分支被跳过，此处是唯一 exit 事件源）
       this._emitProcessEvent({
         processId,

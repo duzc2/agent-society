@@ -61,6 +61,20 @@ export function getToolDefinitions() {
           required: ["operations"]
         }
       }
+    },
+    {
+      type: "function",
+      function: {
+        name: "ui_page_notify",
+        description: "向用户正在查看的 Web UI 页面发一条即显通知（toast，几秒后自动消失）。即时送达、无需等待、不返回结果。页面未打开时通知会被丢弃——必须送达的信息不要用本工具，直接发消息给用户即可。",
+        parameters: {
+          type: "object",
+          properties: {
+            text: { type: "string", description: "通知内容（一两句话，面向用户阅读；长内容会被截断）" }
+          },
+          required: ["text"]
+        }
+      }
     }
   ];
 }

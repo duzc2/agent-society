@@ -95,6 +95,10 @@ describe("ProcessManager — spawnExternalProcess（外部进程统一管理）"
           register: () => {},
           unregister: async () => {},
         },
+        procMessageHub: {
+          getPort: () => 0,
+          registerSpawn: () => ({ ok: true }),
+        },
       },
       dataDir: testDataDir,
     });

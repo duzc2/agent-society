@@ -61,6 +61,10 @@ export function getToolDefinitions() {
               description: "是否主动推送进程事件给智能体（默认 true）。进程状态变化与日志更新会主动推送（30 秒批量、退出立即推送、最多 150 行且 2KB）；设 false 关闭推送，仅保留原有查询接口。",
               default: true
             },
+            procName: {
+              type: "string",
+              description: "接入进程消息协议的进程名（可选）。传入后平台自动注入接入配置，进程代码用 const { proc } = await import(process.env.SOCIETY_PROC_GLUE_URL) 一行完成接入。名下须唯一，同名接入会顶掉旧连接。"
+            },
             intent: {
               type: "string",
               description: [
@@ -199,6 +203,36 @@ export function getToolDefinitions() {
             }
           },
           required: ["processId"]
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "proc_send",
+        description: [
+          "向你自己启动的、已接入进程消息协议的服务器进程发送一条消息。",
+          "未接入协议的普通进程请用 localcmd_send_input（写 stdin）。",
+          "目标自动匹配：你名下只有一个接入进程时无需参数；多个时必须传 processId（localcmd_spawn 返回的进程 ID，localcmd_list 可查）。",
+          "text 与 payload 至少提供一个，进程收到 { ...payload, text }。进程离线返回 proc_offline。"
+        ].join(""),
+        parameters: {
+          type: "object",
+          properties: {
+            processId: {
+              type: "string",
+              description: "进程 ID（localcmd_spawn 返回）。仅当你名下有多个接入进程时才传；只有一个时禁止传（系统自动匹配）"
+            },
+            text: {
+              type: "string",
+              description: "文本消息内容（对应进程收到的 payload.text）"
+            },
+            payload: {
+              type: "object",
+              description: "结构化数据（对象，与 text 并存，对应进程收到的 payload.data 等字段）"
+            }
+          },
+          required: []
         }
       }
     }

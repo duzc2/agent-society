@@ -212,6 +212,21 @@ export class ShutdownManager {
         }
       }
 
+      // 4b2. 关闭服务器进程消息中枢（断开所有进程连接）
+      if (runtime.procMessageHub) {
+        try {
+          runtime.procMessageHub.shutdown();
+          runtime.log.info('服务器进程消息中枢已关闭');
+        } catch (err) {
+          runtime.log.error('服务器进程消息中枢关闭失败', {
+            error: err?.message || String(err),
+            stack: err?.stack,
+            name: err?.name,
+            code: err?.code
+          });
+        }
+      }
+
       // 4c. 关闭 Agent 记忆管理器
       if (runtime.agentMemoryManager) {
         try {

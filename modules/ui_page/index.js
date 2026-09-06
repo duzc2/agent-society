@@ -71,7 +71,7 @@ async function _dispatchAndWait(type, payload, timeoutMs) {
 export default {
   name: "ui_page",
   toolGroupId: "ui_page",
-  toolGroupDescription: "面向本软件 Web UI 页面上下文的工具（执行 JS/读取内容/临时修改 DOM）",
+  toolGroupDescription: "面向本软件 Web UI 页面上下文的工具（执行 JS/读取内容/临时修改 DOM）。职责涉及给用户制作或修改网页界面时应选入本组。纯页面读写与 DOM 操作本组独立完成；仅当注入的 JS 需要后端数据或长驻服务时，才需搭配 \"localcmd\" 工具组（经 fetch(\"/api/proc-http/进程名/…\") 与进程通信）。",
 
   async init(rt) {
     runtime = rt;
@@ -81,6 +81,19 @@ export default {
     autoLoadRegistry = createAutoLoadRegistry({ configService: rt.configService, log });
     await autoLoadRegistry.load();
     _setAutoLoadRegistry(autoLoadRegistry);
+
+    // 页面通知格式化器（A 通道）：eval_js 脚本经 __notify → notify-agent → bus.send
+    // (extras.kind=page_notify) → 插话/新回合进智能体会话（投递与持久化复用消息总线既有机器）
+    runtime._llm.registerMessageFormatter(
+      (message) => message?.extras?.kind === "page_notify",
+      (message) => {
+        const payload = message.payload;
+        const text = typeof payload === "string"
+          ? payload
+          : (payload && typeof payload.text === "string" ? payload.text : "");
+        return `【页面通知】${String(text).slice(0, 500)}`;
+      }
+    );
 
     log.info("ui_page 模块初始化完成");
   },
@@ -136,6 +149,26 @@ export default {
           { operations: Array.isArray(args?.operations) ? args.operations : [] },
           timeoutMs
         );
+      case "ui_page_notify": {
+        // B1：fire-and-forget。只广播不等结果；页面离线时通知随延迟清理被丢弃
+        if (typeof args?.text !== "string" || !args.text.trim()) {
+          return { error: "invalid_params", message: "ui_page_notify 缺少必填参数 text（通知内容）" };
+        }
+        const brokerResult = _getBroker();
+        if (!brokerResult.ok) { return brokerResult; }
+        const notifyEnq = brokerResult.broker.enqueueToActive({
+          type: "notify",
+          payload: { text: args.text, agentId: ctx.agent?.id ?? null }
+        });
+        if (!notifyEnq.ok) { return notifyEnq; }
+        // 客户端不回传结果（同 _preview 约定），服务端延迟清理心跳消息，
+        // 防止页面刷新后 drain 重复弹通知
+        setTimeout(() => {
+          const b = getBroker();
+          if (b) b.clearCommand(notifyEnq.commandId);
+        }, 10_000).unref?.();
+        return { ok: true };
+      }
       default:
         return { error: "unknown_tool", toolName };
     }
@@ -173,6 +206,33 @@ export default {
     return async (req, res, pathParts, body) => {
       const registry = autoLoadRegistry;
       const [resource, action] = pathParts;
+
+      // POST notify-agent — 页面 → 智能体（A 通道，eval_js 脚本经注入的 __notify 闭包调用）
+      // body: { agentId, text } → bus.send(extras.kind=page_notify) → 插话/新回合 + 聊天持久化
+      if (resource === "notify-agent") {
+        if (req.method !== "POST") {
+          return { error: "invalid_method" };
+        }
+        const agentId = typeof body?.agentId === "string" ? body.agentId.trim() : "";
+        const text = typeof body?.text === "string" ? body.text.trim() : "";
+        if (!agentId) {
+          return { error: "missing_agent_id", message: "agentId 必填（执行脚本的智能体 id）" };
+        }
+        if (!text) {
+          return { error: "missing_text", message: "text 必填（通知内容）" };
+        }
+        if (!runtime._agents.has(agentId)) {
+          return { error: "agent_not_found", message: `智能体不存在: ${agentId}` };
+        }
+        const result = runtime.bus.send({
+          to: agentId,
+          from: "page",
+          payload: { text },
+          extras: { kind: "page_notify" }
+        });
+        log.info("[ui_page] 页面通知已投递", { agentId, messageId: result?.messageId ?? null, textPreview: text.slice(0, 100) });
+        return { ok: true, messageId: result?.messageId ?? null };
+      }
 
       if (resource !== "auto-load-scripts") {
         return { error: "not_found", message: `未知资源: ${resource}` };

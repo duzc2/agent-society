@@ -796,7 +796,10 @@ export class ComputeScheduler {
           return;
         }
         if (!this.runtime._agents.has(agentId)) return;
-        this.turnEngine.onLlmResult(agentId, {
+        // 必须 await：onLlmResult 是 async（内部做消息持久化等 IO）。未完成前 turn.phase
+        // 仍是 waiting_llm，若此刻 _markReady 唤醒调度器并发进入 step()，会对 waiting_llm
+        // 返回 noop → 孤儿保护误杀正常推进中的回合（真实事故：23 分钟长回合被终结）
+        await this.turnEngine.onLlmResult(agentId, {
           turnId: outcome.turnId,
           stepId: outcome.stepId,
           msg,
@@ -1094,7 +1097,8 @@ export class ComputeScheduler {
       if (!this.runtime._agents.has(agentId)) return;
 
       void this.runtime.log.info("[ComputeScheduler] LLM 重试成功", { agentId, retryCount });
-      this.turnEngine.onLlmResult(agentId, {
+      // 同主链：必须 await，防止 phase 仍为 waiting_llm 时调度器并发 step() 误判孤儿
+      await this.turnEngine.onLlmResult(agentId, {
         turnId: outcome.turnId,
         stepId: outcome.stepId,
         msg,
@@ -1211,11 +1215,12 @@ export class ComputeScheduler {
         }
         return await this.runtime.executeToolCall(outcome.ctx, toolName, args);
       })
-      .then((result) => {
+      .then(async (result) => {
         const currentEpoch = this.runtime._cancelManager.getEpoch(agentId) ?? epoch;
         if (currentEpoch !== epoch) return;
         if (!this.runtime._agents.has(agentId)) return;
-        this.turnEngine.onToolResult(agentId, {
+        // 同 LLM 链：必须 await，防止 dispatch_tools 阶段被并发 step() 提前看到旧状态
+        await this.turnEngine.onToolResult(agentId, {
           turnId: outcome.turnId,
           stepId: outcome.stepId,
           callId: outcome.call.callId,

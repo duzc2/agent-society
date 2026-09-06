@@ -324,6 +324,14 @@ export class LlmClient {
       ? input.system.trim()
       : null;
 
+    // 防御：调用方把 system 放在 messages 里时会被本方法忽略——显式告警避免"提示词静默失效"
+    if (!systemStr && Array.isArray(input.messages) && input.messages.some((m) => m?.role === "system")) {
+      await this.log.warn("检测到 messages 数组中包含 system 角色消息，已忽略。system 提示词必须经 input.system 参数传递", {
+        agentId: meta?.agentId ?? null,
+        systemMessageCount: input.messages.filter((m) => m?.role === "system").length
+      });
+    }
+
     // 手动估算 system tokens（用于 token budget 计算）
     const systemTokens = systemStr
       ? this._truncationService.estimateMessageTokens({ role: "system", content: systemStr })

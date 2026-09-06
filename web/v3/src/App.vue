@@ -34,7 +34,7 @@ import { useToast } from 'primevue/usetoast';
 initGlobalDragListener();
 import { errorNotificationService } from './services/errorNotification';
 import { uiCommandService } from './services/uiCommandService';
-import { heartbeatService, orgTreeHandler } from './services/heartbeatService';
+import { heartbeatService, orgTreeHandler, resolveAgentContext } from './services/heartbeatService';
 import { cmdConfirmHandler } from './services/cmdConfirmService';
 import { apiService, normalizeHeartbeatMessage } from './services/api';
 import { useChatStore } from './stores/chat';
@@ -221,6 +221,11 @@ onMounted(() => {
         chatStore.fetchGroupList();
       }
     });
+    // proc_event 心跳 → window CustomEvent（进程控制台等模块面板 iframe 经 ModuleWindow 转发接收）
+    heartbeatService.onMessage('proc_event', (msg) => {
+      window.dispatchEvent(new CustomEvent('proc-event', { detail: msg }));
+    });
+
     heartbeatService.start();
 
     // 启动 UI 命令服务（处理智能体的页面操作请求）
@@ -233,6 +238,20 @@ onMounted(() => {
 
 // 全局错误边界：捕获未处理的 Vue 组件错误
 const appToast = useToast();
+
+// 智能体页面通知（B1 通道消费端）：ui_command{type:notify} → agent-notify CustomEvent → toast
+const onAgentNotify = (e: Event) => {
+  const d = (e as CustomEvent).detail ?? {};
+  const agentCtx = resolveAgentContext(d.agentId);
+  appToast.add({
+    severity: 'info',
+    summary: agentCtx ? `通知 · ${agentCtx.agentName}` : '智能体通知',
+    detail: String(d.text ?? ''),
+    life: 6000
+  });
+};
+window.addEventListener('agent-notify', onAgentNotify);
+
 onErrorCaptured((err: unknown, _instance: any, info: string) => {
   const message = err instanceof Error ? err.message : String(err);
   // 同时打印完整 Error 对象（包含 stack trace）和 Vue 上下文
@@ -250,6 +269,7 @@ onErrorCaptured((err: unknown, _instance: any, info: string) => {
 onUnmounted(() => {
     heartbeatService.stop();
     uiCommandService.stop();
+    window.removeEventListener('agent-notify', onAgentNotify);
 });
 </script>
 

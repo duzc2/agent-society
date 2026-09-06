@@ -22,6 +22,9 @@ function registerHeartbeatRoutes({ app, log, heartbeatBroker }) {
 
     const lastMessageId = body.lastMessageId ?? 0;
 
+    // 记录客户端在线（离线→在线转变会触发 onClientOnline 回调，供保活重投等消费）
+    broker.markClientSeen();
+
     // 检测客户端序列号是否来自上一服务器会话（服务器重启后 _nextId 重置为 1）
     const needRefresh = lastMessageId > 0 && lastMessageId >= broker.getNextId();
 

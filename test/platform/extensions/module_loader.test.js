@@ -33,6 +33,18 @@ function makeRuntimeMock() {
   };
 }
 
+/** registerGroup 记录调用参数的 runtime mock（验证模块工具组注册链路） */
+function makeRecordingRuntimeMock() {
+  const registered = [];
+  return {
+    toolGroupManager: {
+      registerGroup: (id, opts) => { registered.push({ id, opts }); return { ok: true }; },
+      unregisterGroup: (id) => ({ ok: true })
+    },
+    _registered: registered
+  };
+}
+
 describe("ModuleLoader", () => {
   // ==================== 构造函数 ====================
 
@@ -218,6 +230,46 @@ describe("ModuleLoader", () => {
       const result = await loader.loadModules([], runtimeMock);
       assert.deepStrictEqual(result.loaded, []);
       assert.deepStrictEqual(result.errors, []);
+    });
+
+    it("带 toolGroupId/toolGroupDescription 的模块 → 注册进工具组时保留 id 与描述", async () => {
+      await createModuleFile("desc_module", `
+        export default {
+          name: "desc_module",
+          toolGroupId: "custom_group",
+          toolGroupDescription: "自定义组描述（互相引用测试）",
+          getToolDefinitions: () => [{ type: "function", function: { name: "desc_tool" } }],
+          executeToolCall: async () => ({ result: "ok" }),
+          init: async () => {},
+          shutdown: async () => {}
+        };
+      `);
+      const recRuntime = makeRecordingRuntimeMock();
+      const result = await loader.loadModules(["desc_module"], recRuntime);
+      assert.ok(result.loaded.includes("desc_module"));
+      const reg = recRuntime._registered.find((r) => r.id === "custom_group");
+      assert.ok(reg, "应以模块声明的 toolGroupId 注册");
+      assert.strictEqual(reg.opts.description, "自定义组描述（互相引用测试）");
+      assert.strictEqual(reg.opts.tools.length, 1);
+      assert.strictEqual(reg.opts.tools[0].function.name, "desc_tool");
+    });
+
+    it("不带 toolGroupId/toolGroupDescription 的模块 → 注册时回退模块名与默认描述", async () => {
+      await createModuleFile("bare_module", `
+        export default {
+          name: "bare_module",
+          getToolDefinitions: () => [{ type: "function", function: { name: "bare_tool" } }],
+          executeToolCall: async () => ({ result: "ok" }),
+          init: async () => {},
+          shutdown: async () => {}
+        };
+      `);
+      const recRuntime = makeRecordingRuntimeMock();
+      const result = await loader.loadModules(["bare_module"], recRuntime);
+      assert.ok(result.loaded.includes("bare_module"));
+      const reg = recRuntime._registered.find((r) => r.id === "bare_module");
+      assert.ok(reg, "应以模块名作为组 id 回退");
+      assert.strictEqual(reg.opts.description, "bare_module 模块提供的工具");
     });
   });
 

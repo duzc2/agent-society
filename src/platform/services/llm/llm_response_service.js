@@ -80,7 +80,7 @@ export class LlmResponseService {
    * @returns {object} 助手消息对象
    */
   buildAssistantMessage(input = {}) {
-    const rawText = typeof input?.text === "string" ? input.text : "";
+    const rawText = this._normalizeSuspiciousText(typeof input?.text === "string" ? input.text : "");
     const externalReasoning = typeof input?.reasoning === "string" && input.reasoning.trim()
       ? input.reasoning.trim()
       : null;
@@ -135,6 +135,42 @@ export class LlmResponseService {
   }
 
   // ─── 私有辅助方法 ────────────────────────────────────────
+
+  /**
+   * 自愈防御：识别"完整的 Anthropic Messages 响应体被误当作文本内容"的形态并提取真实文本。
+   * 背景：个别模型/代理组合在长响应下会把整包响应 JSON 填进 text（真实故障样例：
+   * glm-5.3-flash 经本地代理的长代码生成任务）。触发条件苛刻（type=message +
+   * role=assistant + content 数组三者同时命中），不会误伤模型正常输出的 JSON 文本。
+   * @param {string} text
+   * @returns {string}
+   * @private
+   */
+  _normalizeSuspiciousText(text) {
+    if (typeof text !== "string") {
+      return text;
+    }
+    const trimmed = text.trimStart();
+    if (!trimmed.startsWith("{")) {
+      return text;
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (
+        parsed?.type === "message"
+        && parsed?.role === "assistant"
+        && Array.isArray(parsed.content)
+        && parsed.content.some((block) => block?.type === "text" && typeof block.text === "string")
+      ) {
+        return parsed.content
+          .filter((block) => block?.type === "text" && typeof block.text === "string")
+          .map((block) => block.text)
+          .join("");
+      }
+    } catch {
+      // 非 JSON，按普通文本原样返回
+    }
+    return text;
+  }
 
   _extractReasoning(text) {
     if (!text || typeof text !== "string") {

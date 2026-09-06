@@ -96,6 +96,12 @@ function createMockSociety() {
     clearMessage() {},
     onBeforeDrain() {},
     onDelayedDelivery() {},
+    // P5 在线感知 / 保活重投接口（与 heartbeat_broker.js 真实接口保持同步）
+    markClientSeen() {},
+    isClientOnline() { return true; },
+    onClientOnline() {},
+    offClientOnline() {},
+    refreshTtl() {},
   };
 
   const agentTools = { groupChatService: null };

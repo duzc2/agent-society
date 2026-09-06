@@ -27,15 +27,26 @@ import { ContentAdapter } from "../utils/content/content_adapter.js";
 import { ContentRouter } from "../utils/content/content_router.js";
 import { OrgTemplateRepository } from "../services/org_templates/org_template_repository.js";
 import { HeartbeatBroker } from "../services/heartbeat/heartbeat_broker.js";
+import { ProcMessageHub } from "../services/proc_messaging/proc_message_hub.js";
 import { _bootstrapWorkspaceManager } from "../services/workspace/workspace_manager.js";
 import "../services/mood/mood_service.js";
 
 export class BootstrapManager {
   constructor(runtime) {
     this.runtime = runtime;
+    /** @type {boolean} 已完成过一次 bootstrap（幂等守卫：重复 init 不重建组件） */
+    this._bootstrapped = false;
   }
 
   async bootstrap() {
+    // 幂等守卫：二次 init 会把已启动的 ProcMessageHub（TCP 监听 socket）等
+    // 持有事件循环句柄的组件整体重建并覆盖旧引用——旧 hub 永远无法关闭，
+    // 进程因此无法退出；bus/heartbeat/内存监控等也会被静默重复创建。
+    // "重复初始化应安全" 的语义是第二次调用为无副作用的无操作。
+    if (this._bootstrapped) {
+      this.runtime.log?.debug?.("[BootstrapManager] 已完成过初始化，跳过重复 bootstrap");
+      return;
+    }
     const r = this.runtime;
 
     // 优先使用外部传入的配置对象，否则使用配置服务加载
@@ -86,6 +97,16 @@ export class BootstrapManager {
 
     r.bus = new MessageBus({
       logger: r.loggerRoot.forModule("bus")
+    });
+
+    // 服务器进程消息中枢：让智能体创建的进程成为消息总线的一等端点（P1）。
+    // 传输走框架 HTTP 服务（proc_message_channel_routes 注册端点），本类只做会话与路由，
+    // 不监听任何端口；进程侧 base URL 由 AgentSociety 在 HTTP 启动后挂到 runtime.httpBaseUrl。
+    // 必须晚于 bus / heartbeatBroker 创建（构造器要求非空，铁律：功能组件禁止空值兼容）
+    r.procMessageHub = new ProcMessageHub({
+      logger: r.loggerRoot.forModule("proc_messaging"),
+      bus: r.bus,
+      heartbeatBroker: r.heartbeatBroker
     });
 
     r.prompts = new PromptLoader({ promptsDir: r.config.promptsDir, logger: r.loggerRoot.forModule("prompts") });
@@ -254,6 +275,8 @@ export class BootstrapManager {
       agents: r._agents.size,
       browserJsExecutorAvailable: false  // 延迟初始化，启动时不阻塞
     });
+
+    this._bootstrapped = true;
   }
 
   async _tryInitModelSelector() {

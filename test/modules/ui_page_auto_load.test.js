@@ -365,6 +365,7 @@ describe("ui_page 模块 HTTP handler", () => {
     await uiPageModule.init({
       loggerRoot: testLoggerRoot,
       configService,
+      _llm: { registerMessageFormatter: () => {} },
     });
     handler = uiPageModule.getHttpHandler();
   });
@@ -386,6 +387,7 @@ describe("ui_page 模块 HTTP handler", () => {
     await uiPageModule.init({
       loggerRoot: testLoggerRoot,
       configService,
+      _llm: { registerMessageFormatter: () => {} },
     });
     handler = uiPageModule.getHttpHandler();
   }
@@ -478,7 +480,7 @@ describe("ui_page 模块 HTTP handler（添加脚本）", () => {
       logger: makeTestLogger("WM|test"),
     }));
     try { await uiPageModule.shutdown(); } catch {}
-    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService });
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService, _llm: { registerMessageFormatter: () => {} } });
     handler = uiPageModule.getHttpHandler();
   });
 
@@ -496,7 +498,7 @@ describe("ui_page 模块 HTTP handler（添加脚本）", () => {
   async function initWithEntries(entries) {
     await configService.saveModuleConfig("ui_page", { autoLoadScripts: entries });
     try { await uiPageModule.shutdown(); } catch {}
-    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService });
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService, _llm: { registerMessageFormatter: () => {} } });
     handler = uiPageModule.getHttpHandler();
   }
 
@@ -595,7 +597,7 @@ describe("ui_page 模块 HTTP handler（运行预览）", () => {
       clearCommand: clearSpy,
     });
     try { await uiPageModule.shutdown(); } catch {}
-    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService });
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService, _llm: { registerMessageFormatter: () => {} } });
     handler = uiPageModule.getHttpHandler();
   });
 
@@ -623,7 +625,7 @@ describe("ui_page 模块 HTTP handler（运行预览）", () => {
       }],
     });
     try { await uiPageModule.shutdown(); } catch {}
-    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService });
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService, _llm: { registerMessageFormatter: () => {} } });
     handler = uiPageModule.getHttpHandler();
 
     const result = await handler(makeReq("POST"), null, ["auto-load-scripts"], { id: "ws-1:ui_page_js/foo.js", run: true });
@@ -654,7 +656,7 @@ describe("ui_page 模块 HTTP handler（运行预览）", () => {
       }],
     });
     try { await uiPageModule.shutdown(); } catch {}
-    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService });
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService, _llm: { registerMessageFormatter: () => {} } });
     handler = uiPageModule.getHttpHandler();
 
     const result = await handler(makeReq("POST"), null, ["auto-load-scripts"], { id: "ws-1:ui_page_js/missing.js", run: true });
@@ -675,7 +677,7 @@ describe("ui_page 模块 HTTP handler（运行预览）", () => {
       }],
     });
     try { await uiPageModule.shutdown(); } catch {}
-    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService });
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService, _llm: { registerMessageFormatter: () => {} } });
     handler = uiPageModule.getHttpHandler();
 
     enqueueSpy = mock.fn(() => ({ ok: false, error: "heartbeat_broker_not_available" }));
@@ -732,7 +734,7 @@ describe("ui_page 模块 HTTP handler（运行预览）", () => {
       }],
     });
     try { await uiPageModule.shutdown(); } catch {}
-    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService });
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService, _llm: { registerMessageFormatter: () => {} } });
     handler = uiPageModule.getHttpHandler();
 
     mock.timers.enable({ apis: ["setTimeout"] });
@@ -972,7 +974,7 @@ describe("ui_page 模块 HTTP handler（归属显示名富化）", () => {
       logger: makeTestLogger("WM|test"),
     }));
     try { await uiPageModule.shutdown(); } catch {}
-    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService, org: mockOrg });
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService, org: mockOrg, _llm: { registerMessageFormatter: () => {} } });
     handler = uiPageModule.getHttpHandler();
   });
 
@@ -990,7 +992,7 @@ describe("ui_page 模块 HTTP handler（归属显示名富化）", () => {
   async function initWithEntries(entries) {
     await configService.saveModuleConfig("ui_page", { autoLoadScripts: entries });
     try { await uiPageModule.shutdown(); } catch {}
-    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService, org: mockOrg });
+    await uiPageModule.init({ loggerRoot: testLoggerRoot, configService, org: mockOrg, _llm: { registerMessageFormatter: () => {} } });
     handler = uiPageModule.getHttpHandler();
   }
 

@@ -9,9 +9,9 @@ import assert from "node:assert";
 import { getToolDefinitions } from "../../../modules/localcmd/tools.js";
 
 describe("localcmd tools schema", () => {
-  it("工具数量与名称保持不变（6 个）", () => {
+  it("工具数量与名称列表（7 个，含 proc_send）", () => {
     const defs = getToolDefinitions();
-    assert.strictEqual(defs.length, 6);
+    assert.strictEqual(defs.length, 7);
     assert.deepStrictEqual(
       defs.map(d => d.function.name),
       [
@@ -20,7 +20,8 @@ describe("localcmd tools schema", () => {
         "localcmd_read_output",
         "localcmd_get_status",
         "localcmd_list",
-        "localcmd_kill"
+        "localcmd_kill",
+        "proc_send"
       ]
     );
   });

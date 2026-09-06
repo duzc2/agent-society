@@ -387,3 +387,127 @@ label {
   .entry-row { flex-wrap: wrap; }
   .entry-reason { width: 100%; }
 }
+
+/* ============================================================
+   进程控制台（v3）
+   ============================================================ */
+.proc-list { display: flex; flex-direction: column; gap: 8px; }
+
+.proc-item {
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.proc-item.expanded { border-color: #3b82f6; }
+
+.proc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.proc-head:hover { background: #263244; }
+
+.proc-dot {
+  flex-shrink: 0;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+}
+.proc-dot.on  { background: #4ade80; box-shadow: 0 0 6px rgba(74,222,128,.6); }
+.proc-dot.off { background: #4b5563; }
+
+.proc-cmd {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+  color: #e5e7eb;
+}
+
+.proc-status {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  color: #9ca3af;
+}
+
+.proc-body {
+  display: none;
+  border-top: 1px solid #374151;
+  padding: 10px 12px;
+}
+.proc-item.expanded .proc-body { display: block; }
+
+/* 协议进程消息流 */
+.proc-stream {
+  max-height: 240px;
+  overflow-y: auto;
+  background: #0c1222;
+  border: 1px solid #2d3748;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 0.7rem;
+  line-height: 1.55;
+}
+.stream-line {
+  display: flex;
+  gap: 8px;
+  padding: 1px 0;
+  color: #d1d5db;
+  word-break: break-all;
+}
+.stream-line.err .stream-event, .stream-line.err .stream-data { color: #f87171; }
+.stream-ts   { flex-shrink: 0; color: #6b7280; font-family: "JetBrains Mono", Consolas, monospace; }
+.stream-event { flex-shrink: 0; color: #4ade80; font-weight: 600; }
+.stream-data { min-width: 0; color: #9ca3af; }
+
+/* 普通进程文本输出 */
+.proc-output {
+  max-height: 240px;
+  overflow-y: auto;
+  background: #0c1222;
+  border: 1px solid #2d3748;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 0.7rem;
+  line-height: 1.5;
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+  color: #d1d5db;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 发送行 */
+.proc-input-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.proc-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 0.73rem;
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+  color: #e5e7eb;
+  background: #0c1222;
+  border: 1px solid #374151;
+  border-radius: 5px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.proc-input::placeholder { color: #4b5563; }
+.proc-input:focus { border-color: #3b82f6; }
+.proc-input:disabled { opacity: 0.5; }
+
+.proc-warn {
+  margin-top: 6px;
+  font-size: 0.7rem;
+  color: #f87171;
+  min-height: 1em;
+}

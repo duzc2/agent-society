@@ -44,7 +44,7 @@ export default {
   toolGroupId: "localcmd",
 
   // 工具组描述
-  toolGroupDescription: "本地命令执行工具，支持长期运行的交互式进程，输出写入文件",
+  toolGroupDescription: "本地命令执行工具，支持长期运行的交互式进程，输出写入文件；进程可接入消息协议（proc.send 进你会话、proc.notifyWeb 推网页进程）。仅当要给用户制作可交互的网页界面时，才需搭配 \"ui_page\" 工具组：界面由 ui_page 注入，本组进程按需经 proc.onRequest 提供后端数据。",
 
   /**
    * 初始化模块
@@ -88,6 +88,27 @@ export default {
       log.info("[LocalCmd] 已注册系统提示词注入");
     }
 
+    // 进程消息协议格式化器：进程 msg → 【服务器进程消息·<进程名>】插入会话（可回溯，同页面通知语义）
+    if (runtime._llm && typeof runtime._llm.registerMessageFormatter === "function") {
+      runtime._llm.registerMessageFormatter(
+        (message) => message?.extras?.kind === "proc_msg",
+        (message) => {
+          const procName = message.extras?.procName ?? "服务器进程";
+          const payload = message.payload;
+          let body;
+          if (typeof payload === "string") {
+            body = payload;
+          } else if (payload && typeof payload.text === "string") {
+            body = payload.text;
+          } else {
+            try { body = JSON.stringify(payload ?? {}); } catch { body = "[载荷不可序列化]"; }
+          }
+          return `【服务器进程消息·${procName}】${body.slice(0, 500)}`;
+        }
+      );
+      log.info("[LocalCmd] 已注册进程消息格式化器");
+    }
+
     log.info("[LocalCmd] 模块初始化完成", {
       systemInfo: processManager.getSystemInfo()
     });
@@ -127,7 +148,7 @@ export default {
             return await processManager.spawn(
               args.command,
               args.args ?? [],
-              { cwd: resolvedCwd, env: args.env, agentId, pushEvents: args.pushEvents !== false }
+              { cwd: resolvedCwd, env: args.env, agentId, pushEvents: args.pushEvents !== false, procName: args.procName }
             );
           }
 
@@ -156,7 +177,7 @@ export default {
               return await processManager.spawn(
                 args.command,
                 args.args ?? [],
-                { cwd: resolvedCwd, env: args.env, agentId, pushEvents: args.pushEvents !== false }
+                { cwd: resolvedCwd, env: args.env, agentId, pushEvents: args.pushEvents !== false, procName: args.procName }
               );
             }
 
@@ -199,7 +220,7 @@ export default {
                 return await processManager.spawn(
                   args.command,
                   args.args ?? [],
-                  { cwd: resolvedCwd, env: args.env, agentId, pushEvents: args.pushEvents !== false }
+                  { cwd: resolvedCwd, env: args.env, agentId, pushEvents: args.pushEvents !== false, procName: args.procName }
                 );
               } else {
                 return {
@@ -219,6 +240,51 @@ export default {
 
         case "localcmd_send_input":
           return processManager.sendInput(args.processId, args.input);
+
+        case "proc_send": {
+          // 进程消息协议：向已接入消息中枢的服务器进程发送结构化消息（P3）
+          // 原则：系统能自动匹配的信息（归属智能体、进程身份）不让智能体提供——
+          // processId 缺省时自动匹配当前智能体唯一接入进程；多个时提示传 processId
+          const agentId = ctx?.agent?.id ?? null;
+          const processId = typeof args?.processId === "string" ? args.processId.trim() : "";
+          const hub = runtime.procMessageHub;
+          if (!hub || typeof hub.sendToProcess !== "function" || typeof hub.listProcsByAgent !== "function") {
+            log.error("[LocalCmd] proc_send 调用时消息中枢不可用", { agentId, processId, toolName });
+            return { error: "proc_hub_unavailable" };
+          }
+          // 校验：text/payload 至少一项；payload 须为普通对象（字符串会被展开成 {0:'h',1:'i'} 乱码）
+          const hasText = typeof args?.text === "string" && args.text.length > 0;
+          const hasPayload = args?.payload !== undefined && args?.payload !== null;
+          if (!hasText && !hasPayload) {
+            return { error: "proc_empty_message", message: "text 与 payload 至少提供一个" };
+          }
+          if (hasPayload && (typeof args.payload !== "object" || Array.isArray(args.payload))) {
+            return { error: "proc_invalid_payload", message: "payload 必须是对象（如 { url: '...' }），不能是字符串或数组" };
+          }
+          const payload = {
+            ...(hasPayload ? args.payload : {}),
+            ...(hasText ? { text: args.text } : {})
+          };
+          let result;
+          if (processId) {
+            result = hub.sendToProcess(processId, { payload });
+          } else {
+            const candidates = hub.listProcsByAgent(agentId ?? "");
+            if (candidates.length === 0) {
+              return { error: "proc_offline", message: "当前没有接入消息协议的在线进程（普通 stdin/stdout 进程请使用 localcmd_send_input）" };
+            }
+            if (candidates.length > 1) {
+              // 错误信息直接给出各进程的 processId（智能体无需再查 localcmd_list 匹配）
+              return {
+                error: "proc_ambiguous",
+                message: "当前有多个接入进程：" + candidates.map((c) => `${c.procName} (processId=${c.processId ?? "未知"})`).join(", ") + "，请传其中一个 processId"
+              };
+            }
+            result = hub.sendToProc(candidates[0].addr, { payload });
+          }
+          log.info("[LocalCmd] proc_send 结果", { agentId, processId, result });
+          return { ok: result.ok === true, ...(result.ok === true ? {} : { error: result.error, processId: result.processId ?? null, addr: result.addr ?? null }) };
+        }
 
         case "localcmd_read_output":
           return await processManager.readOutput(args.processId, {
@@ -473,6 +539,15 @@ export default {
             return { ok: true, process };
           }
 
+          // POST /api/modules/localcmd/processes/:processId/input — 面板 stdin 输入
+          if (req.method === "POST" && id && action === "input") {
+            const input = typeof body?.input === "string" ? body.input : null;
+            if (input === null) {
+              return { error: "missing_input" };
+            }
+            return processManager.sendInput(id, input);
+          }
+
           return { error: "method_not_allowed", method: req.method, resource };
         }
 
@@ -556,6 +631,64 @@ function _buildSystemPrompt() {
     "工作区内和已授权的路径下自动化文件处理（读取、转换、生成、批量修改文件等）应优先使用 sandbox（沙箱 JS），而不是 localcmd。\n" +
     "localcmd 需要权限审核，可能被拒绝或需要用户确认而中断流程；sandbox 无需权限、直接读写工作区文件。\n" +
     "仅在 sandbox 无法完成（需要网络、需要调用外部命令、需要运行非 JavaScript 程序）时才使用 localcmd。";
+
+  // 服务器进程消息协议（P3）：告知智能体创建的进程可接入消息总线。
+  // 写法以「完整可照抄的模板」为核心——LLM 对代码骨架的遵循远好于对要点描述的遵循（真实 LLM 验证结论）。
+  prompt += "\n\n【服务器进程消息协议】\n" +
+    "你用 localcmd_spawn 启动长期运行的进程时，传 procName 参数（如 procName=\"监控\"，名下唯一）即可接入消息协议，\n" +
+    "平台自动注入全部连接配置（禁止自造 stdin/stdout 协议）。进程代码模板：\n" +
+    "```js\n" +
+    "// ---- 接入部分：原样保留，只有这一行 ----\n" +
+    "const { proc } = await import(process.env.SOCIETY_PROC_GLUE_URL);\n" +
+    "// ---- 业务部分：按需修改 ----\n" +
+    "proc.onMessage((msg) => {                 // 收我下发的指令，msg = { ...payload, text }\n" +
+    "  if (msg.text === \"开始\") proc.send({ text: \"已开始\" });\n" +
+    "});\n" +
+    "proc.notifyWeb(\"progress\", { percent: 0 }); // 定时调用即可向网页推送进度\n" +
+    "```\n" +
+    "【proc 对象只有以下四个方法，不存在其他任何方法（没有 proc.log / proc.sendTo 等），不要自己发明】：\n" +
+    "- proc.send({ text })：发给你（智能体），以【服务器进程消息·进程名】进你的会话；\n" +
+    "- proc.notifyWeb(event, data)：把事件实时推送到网页——这是进程把信息送到用户屏幕的唯一途径；页面 JS 也能直接订阅收到，见下文【网页页面 ⇄ 进程双向通信】；\n" +
+    "- proc.onRequest(handler)：收网页发来的 HTTP 请求（handler 收 {method,path,query,headers,body}，返回 {status,headers?,body?}，可异步）；\n" +
+    "- await proc.close()：进程退出前调用。\n" +
+    "凡是要让用户在网页上看到的进度/状态/结果，必须用 proc.notifyWeb；\n" +
+    "proc_send 工具是你向进程下发指令的方式：名下只有一个接入进程时禁止传 processId（系统自动匹配），多个接入进程时才传。\n" +
+    "未接入的普通进程仍走 localcmd_send_input / localcmd_read_output，两种方式可并存。\n" +
+    "\n" +
+    "【网页页面 ⇄ 进程双向通信（双向都是实时推送，无需任何轮询）】\n" +
+    "页面 ⇄ 进程的界面由 ui_page 工具组的 JS 注入实现（未配 ui_page 组时你没有创建页面的能力）。\n" +
+    "两个方向都有平台内建推送，页面代码禁止自造 /api/poll 之类的轮询接口：\n" +
+    "① 进程 → 页面（推送）：进程调 proc.notifyWeb(event, data) 后，页面 JS 订阅 window 的 \"proc-event\" 事件即可实时收到——\n" +
+    "```html\n" +
+    "<script>\n" +
+    "  window.addEventListener(\"proc-event\", (e) => {\n" +
+    "    const p = e.detail.payload;        // { procName, event, data, ts }\n" +
+    "    if (p.event === \"progress\") updateProgress(p.data);   // 例：更新进度条\n" +
+    "  });\n" +
+    "</script>\n" +
+    "```\n" +
+    "② 页面 → 进程（请求）：页面 fetch 同源相对路径即达进程（经平台 HTTP 桥转发，进程不监听端口）——fetch(\"/api/proc-http/进程名/路径\")：\n" +
+    "```html\n" +
+    "<script>\n" +
+    "  const r = await fetch(\"/api/proc-http/widget-server/api/data\", {\n" +
+    "    method: \"POST\",\n" +
+    "    headers: { \"Content-Type\": \"application/json\" },\n" +
+    "    body: JSON.stringify({ text: \"用户输入\" })\n" +
+    "  });\n" +
+    "  const data = await r.json();   // 进程 onRequest 返回的 {status, body}\n" +
+    "</script>\n" +
+    "```\n" +
+    "进程侧用 proc.onRequest 接住这些请求：\n" +
+    "```js\n" +
+    "proc.onRequest(async (req) => {            // req = { method, path, query, headers, body }\n" +
+    "  if (req.path === \"/api/data\") {\n" +
+    "    return { status: 200, body: { ok: true, received: req.body } };\n" +
+    "  }\n" +
+    "  return { status: 404, body: { error: \"not_found\" } };\n" +
+    "});\n" +
+    "```\n" +
+    "页面经此通道发出的内容不会进你的会话（那是 proc.send 的通道）；要让页面上的用户输入同时给你处理，\n" +
+    "在 onRequest 里收到后用 proc.send 转发给你——不要发明自定义文本标记协议来路由消息。";
 
   // 附加策略信息
   if (policyStore) {

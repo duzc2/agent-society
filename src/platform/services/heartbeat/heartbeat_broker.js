@@ -21,6 +21,62 @@ export class HeartbeatBroker {
 
     /** @type {Set<Function>} drain 前同步回调（在 drain() 执行前被调用，用于注入消息） */
     this._beforeDrainCallbacks = new Set();
+
+    /** @type {number} 最近一次客户端心跳时间（0 = 从未见客户端，离线态） */
+    this._lastClientSeenAt = 0;
+
+    /** @type {boolean} 当前在线态（用于离线→在线转变检测，避免重复触发回调） */
+    this._clientOnline = false;
+
+    /** @type {Set<Function>} 客户端离线→在线转变回调（保活重投的触发器） */
+    this._clientOnlineCallbacks = new Set();
+  }
+
+  /** 客户端在线判定窗口：3s 心跳间隔，10s 容忍连续丢包 2-3 次 */
+  static CLIENT_ONLINE_WINDOW_MS = 10_000;
+
+  /**
+   * 记录一次客户端心跳（POST /api/heartbeat 时调用）。
+   * 从离线态进入在线态时触发一次所有 onClientOnline 回调。
+   */
+  markClientSeen() {
+    this._lastClientSeenAt = Date.now();
+    if (!this._clientOnline) {
+      this._clientOnline = true;
+      for (const fn of this._clientOnlineCallbacks) {
+        try {
+          fn();
+        } catch (err) {
+          this.log.warn("[HeartbeatBroker] onClientOnline 回调异常:", err?.message || err);
+        }
+      }
+    }
+  }
+
+  /**
+   * 是否有客户端在线（最近 withinMs 内有过心跳）。
+   * 服务重启后为 false（无 clientId 设计：只感知"有没有人在线"，不区分是谁）。
+   * @param {number} [withinMs]
+   * @returns {boolean}
+   */
+  isClientOnline(withinMs = HeartbeatBroker.CLIENT_ONLINE_WINDOW_MS) {
+    return this._lastClientSeenAt > 0 && Date.now() - this._lastClientSeenAt < withinMs;
+  }
+
+  /**
+   * 注册客户端离线→在线转变回调（同步调用，无参数）。
+   * @param {Function} fn
+   */
+  onClientOnline(fn) {
+    this._clientOnlineCallbacks.add(fn);
+  }
+
+  /**
+   * 移除客户端上线回调。
+   * @param {Function} fn
+   */
+  offClientOnline(fn) {
+    this._clientOnlineCallbacks.delete(fn);
   }
 
   /**
@@ -110,6 +166,18 @@ export class HeartbeatBroker {
    */
   clearMessage(messageId) {
     this._messages.delete(messageId);
+  }
+
+  /**
+   * 刷新消息 TTL（保活重投：页面离线期间消息不过期，回线后仍可 drain 到）。
+   * 消息不存在时静默忽略（可能已被 clearMessage）。
+   * @param {number} messageId
+   * @param {number} ttlMs
+   */
+  refreshTtl(messageId, ttlMs) {
+    const msg = this._messages.get(messageId);
+    if (!msg) { return; }
+    msg.expiresAt = ttlMs ? Date.now() + ttlMs : null;
   }
 
   /**

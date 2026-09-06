@@ -331,3 +331,41 @@ describe("RuntimeTools - 默认工具组行为", () => {
   });
   });
 });
+
+describe("RuntimeTools - generateToolGroupsDescription 工具组描述拼装", () => {
+  /**
+   * 描述拼装逻辑（runtime_tools.js generateToolGroupsDescription）：
+   * 从 toolGroupManager.listGroups() 动态拼装 create_role toolGroups 参数的可选值说明。
+   * 验证拼装不漏组、含描述、空列表走回退文本。
+   */
+  function makeDescRuntime(groups) {
+    return {
+      log: { debug() {}, info() {}, warn() {}, error() {} },
+      toolGroupManager: {
+        listGroups: () => groups
+      }
+    };
+  }
+
+  it("多组时输出含每个组的 id 与描述", () => {
+    const runtime = makeDescRuntime([
+      { id: "localcmd", description: "本地命令执行工具，支持长期运行的交互式进程" },
+      { id: "ui_page", description: "面向本软件 Web UI 页面上下文的工具" }
+    ]);
+    const runtimeTools = new RuntimeTools(runtime);
+    const text = runtimeTools.generateToolGroupsDescription();
+
+    assert.ok(text.includes("localcmd"), "应含 localcmd 组名");
+    assert.ok(text.includes("本地命令执行工具"), "应含 localcmd 组描述");
+    assert.ok(text.includes("ui_page"), "应含 ui_page 组名");
+    assert.ok(text.includes("面向本软件 Web UI 页面上下文的工具"), "应含 ui_page 组描述");
+  });
+
+  it("组列表为空时回退默认说明文本", () => {
+    const runtime = makeDescRuntime([]);
+    const runtimeTools = new RuntimeTools(runtime);
+    const text = runtimeTools.generateToolGroupsDescription();
+
+    assert.strictEqual(text, "工具组标识符列表，限制该岗位可用的工具函数。不指定则使用全部工具组。");
+  });
+});

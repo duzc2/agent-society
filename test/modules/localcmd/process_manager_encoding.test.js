@@ -154,6 +154,10 @@ describe("ProcessManager — 子进程输出编码集成", () => {
           register: () => {},
           unregister: async () => {},
         },
+        procMessageHub: {
+          getPort: () => 0,
+          registerSpawn: () => ({ ok: true }),
+        },
       },
       dataDir: testDataDir,
     });

@@ -353,9 +353,25 @@ function _formatData(data) {
   if (data === undefined) return "undefined";
 
   const seen = new WeakSet();
+  // Error 属性中字符串的最大保留长度：超长时截断并标注总长，防止单条日志被撑爆
+  const MAX_ERROR_STRING_LENGTH = 8000;
   const replacer = (_key, value) => {
     if (typeof value === "bigint") return value.toString();
-    if (value instanceof Error) return { name: value.name, message: value.message, stack: value.stack };
+    if (value instanceof Error) {
+      // 完整保留 Error 的可枚举自有属性（如 AI SDK APICallError 的 responseBody/statusCode/url/cause），
+      // 否则像 "Invalid JSON response" 这类错误只剩 name/message/stack，丢失排查所需的原始响应体。
+      if (seen.has(value)) return "[Circular]";
+      seen.add(value);
+      const props = {};
+      for (const [k, v] of Object.entries(value)) {
+        // requestBodyValues 携带完整请求体（可达数十 KB），请求内容由调用方按需单独记录
+        if (k === "requestBodyValues") continue;
+        props[k] = typeof v === "string" && v.length > MAX_ERROR_STRING_LENGTH
+          ? `${v.slice(0, MAX_ERROR_STRING_LENGTH)}…[已截断，共 ${v.length} 字符]`
+          : v;
+      }
+      return { ...props, name: value.name, message: value.message, stack: value.stack };
+    }
     if (value && typeof value === "object") {
       if (seen.has(value)) return "[Circular]";
       seen.add(value);

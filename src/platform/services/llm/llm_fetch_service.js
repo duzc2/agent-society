@@ -273,6 +273,38 @@ export class LlmFetchService {
           responseBody = await readResponseBodySafely(response.clone());
         }
 
+        // 非流式 Anthropic Messages 响应：给缺失 signature 的 thinking 块补占位
+        // 签名，避免 ai-sdk 响应 schema 校验失败被统一包装为 "Invalid JSON
+        // response"（背景详见 LlmAugmentService.repairThinkingSignatureInResponseBody）。
+        let finalResponse = response;
+        if (!isStreamingResponse && response.ok) {
+          const signatureRepair = self._augmentService.repairThinkingSignatureInResponseBody(requestUrl, responseBody);
+          if (signatureRepair.repairedCount > 0) {
+            const patchedHeaders = new Headers(response.headers);
+            patchedHeaders.set("content-length", String(Buffer.byteLength(signatureRepair.body, "utf8")));
+            responseBody = signatureRepair.body;
+            void self._log.info(`[DEBUG] Patched placeholder signature into thinking blocks`, {
+              requestId,
+              url: requestUrl,
+              repairedCount: signatureRepair.repairedCount
+            });
+            // 完整响应体已从 clone 读出，原响应体流不再被消费；主动释放避免占用连接
+            response.body?.cancel().catch((cancelError) => {
+              void self._log.error("释放原始响应体流失败", {
+                requestId,
+                url: requestUrl,
+                errorMessage: cancelError?.message ?? String(cancelError),
+                stack: cancelError?.stack ?? null
+              });
+            });
+            finalResponse = new Response(responseBody, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: patchedHeaders
+            });
+          }
+        }
+
         const isStreamLikeResponse = isStreamingResponse || self._streamService.isStreamLikeResponseBody(responseBody);
         let responseJsonParseError = null;
         if (responseBody && responseBody !== "" && !isStreamLikeResponse) {
@@ -358,7 +390,8 @@ export class LlmFetchService {
           });
         }
 
-        return response;
+        // 修补发生时 finalResponse 是带占位签名的新 Response，必须返回它
+        return finalResponse;
       } catch (error) {
         clearTimeout(timeoutId);
         const latency = Date.now() - startTime;
