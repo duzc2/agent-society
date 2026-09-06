@@ -2,7 +2,10 @@
 
 > 自组织多智能体协作框架
 
-Agent Society 是一个基于大语言模型的智能体协作系统。不同于传统的固定工作流，Agent Society 中的智能体可以像人类一样自主建立组织、分配任务、协作完成复杂目标。
+[English](./README.en.md) | 中文
+
+Agent Society 是一个基于大语言模型的智能体协作系统。智能体可以自主建立组织、分配任务、协作完成复杂目标。
+
 ---
 
 ![Agent Society UI](docs/images/首页.png)
@@ -17,63 +20,48 @@ Agent Society 是一个基于大语言模型的智能体协作系统。不同于
 
 ---
 
-Agent Society 的记忆这块做了很多层:
-- 核心目标，智能体是可以修改自己的提示词的。把非常重要的内容直接注入到自己的提示词里。
-- 长期零碎的不重要的记忆，是先用0.2B小模型提取摘要，然后放在向量数据库里。
-- 经历的重要事件摘要和需要记忆的技能，是通过大模型做摘要，放在层级管理的文件夹里。
-- 跨智能体的团队共识要写成文档，放在工作区里。
-- 一个岗位的工作内容是放在这个岗位的提示词里。同岗位的智能体都会共享这一段提示词。
-- 智能体还可以自发的在工作区里写工作日志。
-- 智能体之间传递消息量比较大的时候，都会在工作区里写报告，传文件名。
-- 还有技能，是允许智能体自己创建技能的。
-- 整个组织，也有个提示词，铆钉了整个组织存在的意义和工作的目标，就像企业的愿景。
+## 多层记忆
 
-这是七层记忆、 基于异步消息和文档、技能固化 的协作模式。
+Agent Society 为智能体设计了多层记忆机制：
 
-还允许智能体修改软件本身。直接把一项能力变成代码。并且这个代码能修改这个软件自己。这是一个完全AI驱动的形态不可知的一个软件。
-这目前现在AI的这些软件，什么豆X啊、什么千X啊，这些，不管是网页上还是手机上还是PC的可执行文件，它本质上还是把AI当做数据库这种东西在用，都是一个查询语句得到一个结果。即使是claude这种编程软件，也是一问一答的处理AI的回复，也没有真正的把AI融到软件逻辑本身。几乎所有的软件都是这种模式，跟40年前用数据库是一样的模式。
+- **提示词自修改** - 智能体可以把重要内容注入自己的提示词（systemPromptAppendix）
+- **向量记忆** - 长期零碎记忆先由小模型提取摘要，再存入向量数据库
+- **事件与技能记忆** - 重要事件摘要和技能由大模型摘要，存入层级管理的文件夹
+- **团队共识** - 跨智能体的共识写成文档，放在工作区
+- **岗位提示词** - 岗位工作内容放在岗位提示词里，同岗位智能体共享
+- **工作日志** - 智能体可以在工作区里写工作日志
+- **报告传递** - 消息量大时在工作区写报告，只传文件名
+- **技能** - 智能体可以自己创建技能
+- **组织提示词** - 整个组织的提示词定义组织存在的意义和工作目标
 
-Agent Society 允许智能体操作软件本身，直接把能力注入到软件里：智能体有能力修改软件的界面、创造新的功能。不仅Agent是可以自我进化的，软件也是根据用户的需要自我进化的。
+这是七层记忆、基于异步消息和文档、技能固化的协作模式。
 
+Agent Society 还允许智能体修改软件本身：直接把一项能力变成代码，注入到软件里。智能体有能力修改软件的界面、创造新的功能。智能体可以自我进化，软件也可以根据用户的需要自我进化。
 
 ![Agent Society 输入需求](docs/images/输入需求.png)
 ![Agent Society work](docs/images/work.png)
 
 ### 记事本操作
 
-点击查看视频：
-
 [![记事本操作](docs/video/记事本操作.jpg "点击观看")](docs/video/记事本操作.mp4)
 
 ### 软件研发团队
-
-点击查看视频：
 
 [![软件团队](docs/video/软件团队.jpg "点击观看")](docs/video/软件团队.mp4)
 
 ### 浏览器开发者工具调用
 
-点击查看视频：
-
-
 [![获取网页控制台](docs/video/获取网页控制台.jpg "点击观看")](docs/video/获取网页控制台.mp4)
 
 ### 视频生成和剪辑
 
-点击查看视频：
-
 [![视频生成和剪辑](docs/video/视频生成和剪辑2.jpg "点击观看")](docs/video/视频生成和剪辑.mp4)
-
 
 ### 即时生成UI
 
-点击查看视频：
-
 [![打地鼠](docs/video/打地鼠.jpg "点击观看")](docs/video/打地鼠.mp4)
 
-
 ### 天气挂件即时生成
-
 
 ![天气挂件需求](docs/images/天气挂件需求.png)
 ![天气挂件需求](docs/images/天气挂件效果.png)
@@ -81,7 +69,6 @@ Agent Society 允许智能体操作软件本身，直接把能力注入到软件
 ### 组织架构
 
 ![组织架构](docs/images/组织架构.png)
-
 
 ---
 
@@ -108,7 +95,6 @@ cd agent_society
 npm install
 ```
 
-
 ### 启动
 
 ```bash
@@ -119,15 +105,25 @@ npm start
 
 ---
 
-
 ## 使用方式
 
-启动系统后，直接在浏览器里像微信一样与智能体对话：
+启动系统后，在浏览器里与智能体对话：
 
 1. 向 Root 智能体提出需求
 2. 观察智能体自主拆解任务、创建子智能体
 3. 实时查看智能体之间的协作过程
 4. 随时介入对话，与智能体互动
+
+### 正确的使用姿势
+
+系统完全模拟人类管理企业的方法。使用时把自己当成管理者：考虑如何建立自己的组织——设哪些岗位、招什么人、怎么分工。
+
+- **确定岗位**：每个智能体必须在岗位上。为每一种工作创造一个岗位，岗位可以增加、减少，职责可以修改。
+- **长期工作**：软件里没有新建会话的能力，也不为每个任务另起一批智能体。长期使用同一个岗位上的智能体，它会积累记忆、沉淀技能，越用越熟练。
+- **Root 只建组织**：根智能体不做任何工作，只负责建立组织。真正干活的是岗位上的智能体。
+- **组织即公司**：每个组织都可以作为一家独立的公司来管理，组织之间也可以有合作。
+- **层层建团队**：每个智能体都可以建立下级岗位，并在岗位上创建智能体。
+- **招聘零成本**：智能体是虚拟员工，招聘和解聘的成本接近 0——大胆按业务调整编制。
 
 ---
 
@@ -158,30 +154,37 @@ Root 智能体 —— 分析需求，拆解任务
 
 ## 配置
 
-第一次登录网页后会弹出设置界面，如果需要手动设置，需要编辑配置文件。手动修改配置文件后需要重新启动服务器才能加载。
+第一次登录网页后会弹出设置界面。如需手动配置，编辑配置文件后重启服务器加载。
 
 1. 复制配置文件模板：
 
 ```bash
 cp config/app.json config/app.local.json
-cp config/llmservices.json config/llmservices.local.json
+cp config/llmservices_template.json config/llmservices.local.json
 ```
 
-2. 编辑 `config/app.local.json`，配置你的 LLM 服务：
+2. 编辑 `config/llmservices.local.json`，配置 LLM 服务：
 
 ```json
 {
-  "llm": {
-    "baseURL": "http://127.0.0.1:1234/v1",
-    "model": "your-model-name",
-    "apiKey": "your-api-key"
-  }
+  "services": [
+    {
+      "id": "local",
+      "name": "本地模型",
+      "baseURL": "http://127.0.0.1:1234/v1",
+      "model": "your-model-name",
+      "apiKey": "NOT_NEEDED",
+      "capabilityTags": ["text", "tool_calling"]
+    }
+  ]
 }
 ```
+
 ---
+
 ### 配置多模型服务
 
-可以为不同岗位配置不同的 LLM 服务：
+为不同岗位配置不同的 LLM 服务：
 
 ```json
 {
@@ -206,7 +209,7 @@ cp config/llmservices.json config/llmservices.local.json
 }
 ```
 
-系统会根据岗位提示词自动选择最合适的模型，也可以手动指定。
+系统根据岗位提示词自动选择最合适的模型，也可以手动指定。
 
 ---
 
@@ -217,14 +220,12 @@ cp config/llmservices.json config/llmservices.local.json
 - **chrome** - 控制 Chrome 浏览器，实现网页自动化
 - **ssh** - SSH 远程连接，操作远程服务器
 
-在 `config/app.local.json` 中启用：
+编辑 `config/modules.enabled.json`：
 
 ```json
 {
-  "modules": {
-    "chrome": { "headless": false },
-    "ssh": { "enabled": true }
-  }
+  "enableAll": false,
+  "enabled": ["chrome", "ssh"]
 }
 ```
 
@@ -232,10 +233,13 @@ cp config/llmservices.json config/llmservices.local.json
 
 ## 文档
 
-- [快速入门指南](./docs/getting-started.md) - 详细安装配置说明
-- [配置指南](./docs/configuration.md) - 配置项详解
-- [工具参考](./docs/tools.md) - 可用工具列表
-- [开发者参考](./DEV.md) - 开发者参考
+| 文档 | 说明 |
+|------|------|
+| [用户手册（中文）](./docs/zh/user-guide/index.md) | 安装、使用、配置、进阶 |
+| [开发者文档（中文）](./docs/zh/developer-guide/index.md) | 架构、服务层、扩展开发 |
+| [User Guide (English)](./docs/en/user-guide/index.md) | Installation, usage, configuration |
+| [Developer Guide (English)](./docs/en/developer-guide/index.md) | Architecture, services, extensions |
+
 ---
 
 ## 开源协议
@@ -262,6 +266,6 @@ limitations under the License.
 
 <p align="center">
   <a href="https://gitee.com/duzc2/agent_society">Gitee</a> •
-  <a href="./docs/getting-started.md">文档</a> •
+  <a href="./docs/zh/user-guide/index.md">文档</a> •
   <a href="./LICENSE">许可证</a>
 </p>
