@@ -483,7 +483,7 @@ export class ToolSchema {
         type: "function",
         function: {
           name: "edit_file",
-          description: "在文件内精确替换指定文本。old_string 必须与文件中原始文本逐字符精确匹配（含空白和缩进）。默认要求 old_string 在文件中唯一，除非设置 replace_all。路径支持工作区相对路径或已授权的外部绝对路径；外部路径需要目标文件夹 write=true。\n\n【重要提示】\n- 必须先通过 file_read_lines 或 file_search 读取文件，确保 old_string 精确定位\n- 连续编辑时，每次 edit_file 后不需要重新读取文件，但必须确保 old_string 基于最新文件内容\n- 使用 file_search 找到目标代码后，用其返回的完整行内容作为 old_string",
+          description: "在文件内精确替换指定文本。old_string 必须与文件中原始文本逐字符精确匹配（含空白和缩进）。默认要求 old_string 在文件中唯一，除非设置 replace_all。路径支持工作区相对路径或已授权的外部绝对路径；外部路径需要目标文件夹 write=true。\n\n【重要提示】\n- 必须先通过 file_read_lines 或 file_search 读取文件，确保 old_string 精确定位\n- 连续编辑时，每次 edit_file 后不需要重新读取文件，但必须确保 old_string 基于最新文件内容\n- 使用 file_search 找到目标代码后，用其返回的完整行内容作为 old_string\n\n【错误自愈】\n- old_string_not_found：要替换的文本不存在，请用 file_search 重新定位\n- multiple_matches：文本出现多次，用更长的上下文使匹配唯一，或用 replace_all\n- workspace_not_assigned：未分配工作空间；file_not_found：文件不存在；permission_denied：权限不足；not_a_directory：路径不是目录；path_traversal_blocked：禁止绝对路径和 \"..\" 路径遍历",
           parameters: {
             type: "object",
             properties: {
@@ -500,7 +500,7 @@ export class ToolSchema {
         type: "function",
         function: {
           name: "replace_file",
-          description: "在工作空间内创建或修改文件。路径支持工作区相对路径或已授权的外部绝对路径；外部路径需要目标文件夹 write=true。",
+          description: "在工作空间内创建或修改文件。可以保存任何文件类型（图片、视频、文档、代码等）。父目录不存在时自动创建；文件已存在时覆盖。路径支持工作区相对路径或已授权的外部绝对路径；外部路径需要目标文件夹 write=true。\n\n【错误说明】\n- workspace_not_assigned：未分配工作空间\n- file_not_found：文件不存在\n- permission_denied：权限不足\n- path_traversal_blocked：禁止绝对路径和 \"..\" 路径遍历",
           parameters: {
             type: "object",
             properties: {
@@ -580,7 +580,7 @@ export class ToolSchema {
         type: "function",
         function: {
           name: "get_workspace_info",
-          description: "获取当前工作空间的磁盘占用和文件统计信息。",
+          description: "获取当前工作空间的磁盘占用和文件统计信息。读改文件的主链路：先用 list_files 了解现有文件结构，用 file_line_count 了解文件规模，用 file_read_lines 分段读取大文件，用 file_search 精确定位目标代码，再用 edit_file 精确修改。",
           parameters: { type: "object", properties: {} }
         }
       },

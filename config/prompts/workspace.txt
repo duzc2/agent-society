@@ -1,99 +1,14 @@
-工作空间是智能体执行工作时的隔离文件系统环境，用于存放代文档、数据等文件。
+工作空间是智能体执行工作时的隔离文件系统环境，用于存放文档、数据等文件。
 
 ## 核心概念
 
-1) 路径隔离：只能访问工作空间内的文件，无法访问外部文件系统
-2) 相对路径：所有文件操作必须使用相对路径（相对于工作空间根目录）
-3) 工作空间内没有执行代码或者命令的权限，只有读写文件的权限，可能无法满足编程开发的需要。但目录可以作为静态HTTP服务，可以用户在浏览器里打开HTML文件。
+1) 路径隔离：只能访问工作空间内的文件，无法访问外部文件系统。
+2) 相对路径：所有文件操作必须使用相对路径（相对于工作空间根目录）；禁止绝对路径和 ".." 路径遍历，违规返回 "path_traversal_blocked" 错误。
+3) 工作空间内没有执行代码或者命令的权限，只有读写文件的权限，可能无法满足编程开发的需要。但目录可以作为静态HTTP服务，可供用户在浏览器里打开HTML文件。
 4) 如果要从外部系统请求文件内容（比如浏览器）需要访问 http(s)://{主机IP}:{port}/workspace-files/{workspaceId}/{filePath}
 5) 工作区不能作为对用户的最终交付，只能作为多智能体协作和与用户进行沟通的临时文件存放。
 
-## 可用工具
-
-### file_read_lines - 按行号范围读取文件
-```
-file_read_lines({ path: "src/main.js", start_line: 1, end_line: 50 })
-```
-返回：{ lines: ["第1行内容", "第2行内容", ...], start_line: 1, end_line: 50, total_lines: 200 }
-- start_line: 起始行号（1-based，含），默认为 1
-- end_line: 结束行号（1-based，含），超过自动截断到末尾。默认为 500
-
-### file_search - 在单文件内搜索
-```
-file_search({ path: "src/main.js", pattern: "function", is_regex: false, max_results: 100 })
-```
-返回：{ matches: [{ line: 5, col: 1, text: "该行完整内容" }, ...], count: 3, pattern: "function" }
-- pattern: 搜索文本或正则表达式
-- is_regex: 是否按正则匹配，默认为 false
-- 返回的 text 是该行完整内容，可直接用于 edit_file 的 old_string
-
-### file_line_count - 获取文件行数
-```
-file_line_count({ path: "src/main.js" })
-```
-返回：{ path: "src/main.js", lines: 200 }
-
-### edit_file - 精确替换文件内容（核心编辑工具）
-```
-edit_file({ path: "src/main.js", old_string: "要替换的原文", new_string: "替换后的内容" })
-```
-返回：{ ok: true, path: "src/main.js", occurrences: 1 }
-
-【重要规则】
-- old_string 必须与文件中原始文本逐字符精确匹配（含空白、缩进、换行）
-- 默认要求 old_string 在文件中唯一（出现多次会报错 multiple_matches）
-- 设置 replace_all: true 可替换所有匹配项
-- 必须先通过 file_read_lines 或 file_search 读取文件，确保 old_string 精确定位
-- 连续编辑时每次 edit_file 后不需要重新读取文件，但必须确保 old_string 基于最新文件内容
-- old_string_not_found: 文本不存在，请用 file_search 重新定位
-- multiple_matches: 文本出现多次，用更长的上下文使匹配唯一，或用 replace_all
-
-### replace_file - 写入文件
-```
-replace_file({ path: "src/main.js", content: "代码内容", mimeType: "text/javascript" })
-```
-返回：{ ok: true, path: "src/main.js", size: 1024, mimeType: "text/javascript" } 或 { ok: false, error: "错误类型" }
-- 父目录不存在时自动创建
-- 文件已存在时覆盖
-- mimeType 可选，未提供时自动检测（支持 text/javascript、application/json 等）
-
-### list_files - 列出目录
-```
-list_files({ path: "src" })  // 或省略 path 列出根目录
-```
-返回：{ files: [{ name: "main.js", type: "file", size: 1024 }, ...] }
-
-### get_workspace_info - 获取工作空间信息
-```
-get_workspace_info({})
-```
-返回：{ fileCount: 10, dirCount: 3, totalSize: 51200, lastModified: "2024-01-01T00:00:00Z" }
-
-## 重要规则
-
-1) 路径安全：
-   - 必须使用相对路径，禁止使用绝对路径
-   - 禁止使用 ".." 进行路径遍历
-   - 违规操作会返回 "path_traversal_blocked" 错误
-
-2) 常见错误：
-   - workspace_not_assigned：未分配工作空间
-   - file_not_found：文件不存在
-   - permission_denied：权限不足
-   - not_a_directory：路径不是目录
-   - old_string_not_found：要替换的文本在文件中不存在
-   - multiple_matches：文本匹配多处，需要更精确的 old_string
-
-3) 最佳实践：
-   - 先用 list_files 了解现有文件结构
-   - 用 file_line_count 了解文件规模
-   - 用 file_read_lines 分段读取大文件
-   - 用 file_search 精确定位目标代码
-   - 用 edit_file 精确修改文件
-   - 用 get_workspace_info 检查空间使用情况
-
-
-### 何时使用工作空间
+## 何时使用工作空间
 
 当多个智能体需要协作完成系统性工作时，必须使用工作空间：
 - 开发包含多个文件的项目（如网站、应用程序、协作编纂书籍或报告）
@@ -101,11 +16,19 @@ get_workspace_info({})
 - 需要相互引用的文件（如：代码引用配置文件、模块间相互依赖）
 - 多智能体协作编写的多文件合集（如：分卷的书籍、课程）
 
+## 推荐工作流
 
-### 协作示例
+文件读改的主链路（组合用法）：
+1) 先用 list_files 了解现有文件结构
+2) 用 file_line_count 了解文件规模
+3) 用 file_read_lines 分段读取大文件
+4) 用 file_search 精确定位目标代码（返回的完整行内容可直接用作 edit_file 的 old_string）
+5) 用 edit_file 精确修改文件
+6) 用 get_workspace_info 检查空间使用情况
 
-多智能体开发一个网站：
+## 协作示例
+
+多智能体开发一个网站（接力文件模式）：
 1) 架构师智能体：replace_file("design/api.md", "接口设计...")
-2) 前端智能体：file_read_lines("design/api.md") → edit_file("src/app.js", "需替换的原文", "新前端代码...")
-3) 后端智能体：file_read_lines("design/api.md") → edit_file("src/server.js", "需替换的原文", "新后端代码...")
-4) 测试智能体：file_read_lines("src/*") → replace_file("test/test.js", "测试代码...")
+2) 前端/后端智能体：file_read_lines("design/api.md") → edit_file("src/app.js" / "src/server.js", 各自的代码)
+3) 测试智能体：file_read_lines("src/*") → replace_file("test/test.js", "测试代码...")

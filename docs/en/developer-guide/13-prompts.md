@@ -28,8 +28,6 @@ Agent behavior is prompt-driven. System prompt templates live in `config/prompts
 
 【Role prompt (runtime)】
 {{ROLE}}
-
-【Task & context (runtime)】
 {{TASK}}
 ```
 
