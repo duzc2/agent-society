@@ -283,22 +283,52 @@ async function registerMessageRoutes({ app, log, society, runtimeDir }) {
   }
 
   /**
-   * 将存储消息转换为 agent_message 广播格式。
+   * 构造对外呈现的消息存根（心跳广播 / 列表 API 响应用）。
+   * 裁剪需要展开才能查看的大体积内容（思考/记忆召回/知识树/工具参数与结果正文），
+   * 保留不展开即可见的内容（正文 payload、usage、结果文件列表 files），
+   * 并以 hasXxx 布尔标记存在性，供前端展开时按消息 ID 懒加载详情。
+   * 存储层（messagesById / jsonl）保持全量，详情经 detail 端点按 ID 回查。
    * @param {object} m - 存储的消息对象
-   * @returns {object} 广播格式
+   * @returns {object} 裁剪后的存根
    */
-  function buildBroadcastMsg(m) {
+  function buildMessageStub(m) {
+    const isToolCall = m.type === 'tool_call';
+    const payload = isToolCall
+      ? {
+        toolName: m.payload?.toolName,
+        // args 与 result 正文剥离；保留 usage（token 数）与 result.files（生成文件列表，
+        // 工具组卡片上"生成文件 (N)"与"总计 N tokens"不展开即可见，依赖这两个小字段）
+        usage: m.payload?.usage ?? null,
+        hasResult: Boolean(m.payload?.result),
+        result: m.payload?.result?.files
+          ? { files: m.payload.result.files }
+          : null,
+      }
+      : m.payload;
     return {
       id: m.id,
       from: m.from,
       to: m.to,
       taskId: m.taskId,
       type: m.type ?? (m.payload?.type || 'text'),
-      payload: m.payload,
-      reasoning_content: m.reasoning_content ?? null,
+      payload,
+      hasReasoning: Boolean(m.reasoning_content),
+      hasMemoryContext: Boolean(m.memoryContext),
+      hasKnowledgeContext: Boolean(m.knowledgeContext),
       createdAt: m.createdAt,
+      scheduledDeliveryTime: m.scheduledDeliveryTime ?? null,
+      deliveredAt: m.deliveredAt ?? null,
       extras: m.extras ?? null,
     };
+  }
+
+  /**
+   * 将存储消息转换为 agent_message 广播格式。
+   * @param {object} m - 存储的消息对象
+   * @returns {object} 广播格式
+   */
+  function buildBroadcastMsg(m) {
+    return buildMessageStub(m);
   }
 
   /**
@@ -426,7 +456,9 @@ async function registerMessageRoutes({ app, log, society, runtimeDir }) {
           const newMsgs = [];
           for (const m of msgs) {
             if ((m.createdAt ? new Date(m.createdAt).getTime() : 0) > _lastBroadcastAt) {
-              newMsgs.push({ id: m.id, from: m.from, to: m.to, taskId: m.taskId, type: m.type ?? (m.payload?.type || 'text'), payload: m.payload, reasoning_content: m.reasoning_content ?? null, memoryContext: m.memoryContext ?? null, knowledgeContext: m.knowledgeContext ?? null, createdAt: m.createdAt, scheduledDeliveryTime: m.scheduledDeliveryTime ?? null, deliveredAt: m.deliveredAt ?? null, extras: m.extras ?? null });
+              // 广播存根而非全量：大体积内容（思考/记忆/知识/工具正文）不随心跳推送，
+              // 前端展开时经 detail 端点按消息 ID 懒加载
+              newMsgs.push(buildMessageStub(m));
             }
           }
           if (newMsgs.length > 0) { agentsMsgs[agentId] = newMsgs; hasNew = true; }
@@ -476,10 +508,35 @@ async function registerMessageRoutes({ app, log, society, runtimeDir }) {
         resultMsgs = allMsgs.slice(Math.max(0, allMsgs.length - limit));
         hasMore = resultMsgs.length < allMsgs.length && resultMsgs.length > 0;
       }
-      return c.json({ agentId, messages: resultMsgs, total: allMsgs.length, count: resultMsgs.length, hasMore, regenerableMessageId: regenId });
+      // 列表返回存根（与心跳广播一致）：大体积展开内容经 detail 端点按需拉取
+      return c.json({ agentId, messages: resultMsgs.map(buildMessageStub), total: allMsgs.length, count: resultMsgs.length, hasMore, regenerableMessageId: regenId });
     } catch (err) {
       void log.error("查询智能体消息失败", { agentId, error: err.message, stack: err.stack });
       return c.json({ error: "load_messages_failed", message: err.message }, 500);
+    }
+  });
+
+  app.get('/api/agent-messages/:agentId/detail/:messageId', async (c) => {
+    const agentId = decodeURIComponent(c.req.param('agentId'));
+    const messageId = decodeURIComponent(c.req.param('messageId'));
+    if (!agentId || agentId.trim() === "") return c.json({ error: "missing_agent_id" }, 400);
+    if (!messageId || messageId.trim() === "") return c.json({ error: "missing_message_id" }, 400);
+    try {
+      let msg = messagesById.get(messageId) ?? null;
+      if (!msg) {
+        // 内存索引未命中：加载该智能体的消息文件兜底（loadMessagesForAgent 会填充 messagesById）
+        await loadMessagesForAgent(agentId);
+        msg = messagesById.get(messageId) ?? null;
+      }
+      // 归属校验：消息必须属于该智能体（from/to 之一匹配），否则按未找到处理，避免跨智能体读取
+      if (!msg || (msg.from !== agentId && msg.to !== agentId)) {
+        void log.debug("消息详情未找到", { agentId, messageId, foundInIndex: Boolean(msg) });
+        return c.json({ error: "message_not_found" }, 404);
+      }
+      return c.json({ agentId, message: msg });
+    } catch (err) {
+      void log.error("查询消息详情失败", { agentId, messageId, error: err?.message ?? String(err), stack: err?.stack, name: err?.name, code: err?.code });
+      return c.json({ error: "load_message_detail_failed", message: err?.message ?? String(err) }, 500);
     }
   });
 
@@ -705,7 +762,8 @@ async function registerMessageRoutes({ app, log, society, runtimeDir }) {
       const result = {};
       for (const agentId of messagesByAgent.keys()) {
         const allMsgs = await loadMessagesForAgent(agentId);
-        result[agentId] = { messages: allMsgs.slice(Math.max(0, allMsgs.length - limit)), total: allMsgs.length };
+        // 首屏同样返回存根（与心跳广播一致），避免批量拉取时传输全量展开内容
+        result[agentId] = { messages: allMsgs.slice(Math.max(0, allMsgs.length - limit)).map(buildMessageStub), total: allMsgs.length };
       }
       return c.json({ agents: result });
     } catch (err) {

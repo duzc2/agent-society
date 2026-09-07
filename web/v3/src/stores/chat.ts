@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type { Message } from '../types';
-import { apiService } from '../services/api';
+import { apiService, normalizeHeartbeatMessage } from '../services/api';
 
 /**
  * 聊天会话状态管理
@@ -59,17 +59,63 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * 追加增量消息（按 id 去重），用于心跳 agent_message 增量推送。
    * 同 id 消息已存在时合并更新（工具调用卡片收到执行结果时走这里）。
+   * 合并保护：incoming 中值为 undefined 的键不覆盖已有值——服务端推送的是
+   * 裁剪存根（思考/记忆/知识/工具正文不在 payload 中，normalize 后为 undefined 键），
+   * 若不剔除会冲掉已懒加载填充的详情内容。
    */
   const appendMessage = (agentId: string, message: Message) => {
     const existing = chatMessages.value[agentId] || [];
     const idx = existing.findIndex(m => m.id === message.id);
     if (idx !== -1) {
+      const incoming = Object.fromEntries(
+        Object.entries(message).filter(([, v]) => v !== undefined)
+      ) as Partial<Message>;
       const updated = [...existing];
-      updated[idx] = { ...updated[idx], ...message };
+      updated[idx] = { ...updated[idx], ...incoming };
       chatMessages.value[agentId] = updated;
       return;
     }
     chatMessages.value[agentId] = [...existing, message].sort((a, b) => a.timestamp - b.timestamp);
+  };
+
+  // 懒加载详情的 in-flight 去重：messageId → 进行中的 Promise，避免并发展开重复请求
+  const detailInFlight = new Map<string, Promise<void>>();
+
+  /**
+   * 按消息 ID 懒加载完整详情（展开思考/记忆/知识树/工具正文时调用）。
+   * 拉取后经 appendMessage 合并入本地消息（undefined 保护确保不冲掉其他字段）。
+   * 已加载（内容已填充）或进行中时直接复用/跳过。
+   */
+  const loadMessageDetail = async (agentId: string, messageId: string): Promise<void> => {
+    const list = chatMessages.value[agentId];
+    const local = list?.find(m => m.id === messageId);
+    if (!local) return; // 消息不在本地（如已被删除），无需加载
+    // 全部内容已填充则无需请求（args 与 result 任一存在即视为工具正文已加载）
+    const reasoningLoaded = local.reasoning !== undefined || !local.hasReasoning;
+    const memoryLoaded = local.memoryContext !== undefined || !local.hasMemoryContext;
+    const knowledgeLoaded = local.knowledgeContext !== undefined || !local.hasKnowledgeContext;
+    const toolLoaded = local.type !== 'tool_call'
+      || (local.toolCall?.args !== undefined && (local.toolCall?.result !== undefined || !local.toolCall?.hasResult));
+    if (reasoningLoaded && memoryLoaded && knowledgeLoaded && toolLoaded) return;
+
+    const pending = detailInFlight.get(messageId);
+    if (pending) return pending;
+
+    const load = (async () => {
+      try {
+        const raw = await apiService.getMessageDetail(agentId, messageId);
+        if (raw) {
+          const normalized = normalizeHeartbeatMessage(raw, agentId);
+          appendMessage(agentId, normalized);
+        }
+      } catch (error) {
+        console.error(`[chatStore.loadMessageDetail] 懒加载消息详情失败: agentId=${agentId} messageId=${messageId}`, error instanceof Error ? error.stack : error);
+      } finally {
+        detailInFlight.delete(messageId);
+      }
+    })();
+    detailInFlight.set(messageId, load);
+    return load;
   };
 
   /**
@@ -527,6 +573,7 @@ export const useChatStore = defineStore('chat', () => {
     updateInputValue,
     setMessages,
     appendMessage,
+    loadMessageDetail,
     fetchMessages,
     sendMessage,
     updateMessage,

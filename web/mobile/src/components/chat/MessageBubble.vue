@@ -3,11 +3,12 @@
  * 单条消息气泡
  * 显示：文本内容 / 工具调用 / 思考过程
  */
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { Message } from '../../types';
 import { Wrench, Brain, Bot, User, Clock, Database, BookOpen } from 'lucide-vue-next';
 import { useAppStore } from '../../stores/app';
 import { useAgentStore } from '../../stores/agent';
+import { useChatStore } from '../../stores/chat';
 import MoodGrid from '../common/MoodGrid.vue';
 import { isMoodDark } from '../../utils/moodColors';
 import { useFileViewer } from '../../composables/useFileViewer';
@@ -34,7 +35,31 @@ const senderMoodColors = computed(() => {
 
 const isUser = computed(() => props.message.senderType === 'user');
 const isTool = computed(() => props.message.type === 'tool_call');
-const hasReasoning = computed(() => !!props.message.reasoning);
+// 展开区块门控：内容已在手 或 服务端存根标记存在（展开时懒加载回填）
+const hasReasoning = computed(() => !!props.message.reasoning || props.message.hasReasoning === true);
+const hasMemory = computed(() => !!props.message.memoryContext || props.message.hasMemoryContext === true);
+const hasKnowledge = computed(() => !!props.message.knowledgeContext || props.message.hasKnowledgeContext === true);
+// 懒加载状态（区块共享：单条消息的详情一次拉全）
+const detailLoading = ref(false);
+const detailLoaded = ref(false);
+
+/**
+ * details 首次展开时触发懒加载（需要且未加载过才请求）。
+ */
+function onDetailsToggle() {
+  if (detailLoaded.value || detailLoading.value) return;
+  const msg = props.message;
+  const needs = (msg.hasReasoning === true && msg.reasoning === undefined)
+    || (msg.hasMemoryContext === true && msg.memoryContext === undefined)
+    || (msg.hasKnowledgeContext === true && msg.knowledgeContext === undefined);
+  if (!needs) return;
+  detailLoading.value = true;
+  useChatStore().loadMessageDetail(msg.agentId, msg.id).then(() => {
+    detailLoaded.value = true;
+  }).finally(() => {
+    detailLoading.value = false;
+  });
+}
 
 const timeStr = computed(() => {
   const d = new Date(props.message.timestamp);
@@ -186,30 +211,30 @@ async function openFile(file: { name: string; path: string; mimeType: string }) 
       </div>
 
       <!-- 记忆召回 (AgentMemory) -->
-      <details v-if="message.memoryContext" class="mb-1">
+      <details v-if="hasMemory" class="mb-1" @toggle="onDetailsToggle">
         <summary class="flex items-center gap-1 text-xs text-[var(--text-3)] cursor-pointer">
           <Database class="w-3 h-3" />
           <span>记忆召回</span>
         </summary>
-        <pre class="mt-1 text-xs text-[var(--text-3)] whitespace-pre-wrap break-words max-h-40 overflow-y-auto bg-[var(--surface-3)] rounded-lg p-2">{{ message.memoryContext }}</pre>
+        <pre class="mt-1 text-xs text-[var(--text-3)] whitespace-pre-wrap break-words max-h-40 overflow-y-auto bg-[var(--surface-3)] rounded-lg p-2">{{ detailLoading ? '加载中…' : message.memoryContext }}</pre>
       </details>
 
       <!-- 知识树检索 (KnowledgeTree) -->
-      <details v-if="message.knowledgeContext" class="mb-1">
+      <details v-if="hasKnowledge" class="mb-1" @toggle="onDetailsToggle">
         <summary class="flex items-center gap-1 text-xs text-[var(--text-3)] cursor-pointer">
           <BookOpen class="w-3 h-3" />
           <span>知识树</span>
         </summary>
-        <pre class="mt-1 text-xs text-[var(--text-3)] whitespace-pre-wrap break-words max-h-40 overflow-y-auto bg-[var(--surface-3)] rounded-lg p-2">{{ message.knowledgeContext }}</pre>
+        <pre class="mt-1 text-xs text-[var(--text-3)] whitespace-pre-wrap break-words max-h-40 overflow-y-auto bg-[var(--surface-3)] rounded-lg p-2">{{ detailLoading ? '加载中…' : message.knowledgeContext }}</pre>
       </details>
 
       <!-- 思考过程 -->
-      <details v-if="hasReasoning" class="mb-1">
+      <details v-if="hasReasoning" class="mb-1" @toggle="onDetailsToggle">
         <summary class="flex items-center gap-1 text-xs text-[var(--text-3)] cursor-pointer">
           <Brain class="w-3 h-3" />
           <span>思考过程</span>
         </summary>
-        <pre class="mt-1 text-xs text-[var(--text-3)] whitespace-pre-wrap break-words max-h-40 overflow-y-auto bg-[var(--surface-3)] rounded-lg p-2">{{ message.reasoning }}</pre>
+        <pre class="mt-1 text-xs text-[var(--text-3)] whitespace-pre-wrap break-words max-h-40 overflow-y-auto bg-[var(--surface-3)] rounded-lg p-2">{{ detailLoading ? '加载中…' : message.reasoning }}</pre>
       </details>
 
       <!-- 消息正文（Markdown 渲染） -->

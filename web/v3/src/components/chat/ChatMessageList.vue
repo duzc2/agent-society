@@ -48,6 +48,10 @@ const expandedGroups = ref<Record<string, boolean>>({});
 const expandedMemoryContext = ref<Record<string, boolean>>({});
 const expandedKnowledgeContext = ref<Record<string, boolean>>({});
 
+// 展开区懒加载状态（服务端推送为裁剪存根，展开时经 detail 端点按消息 ID 回查全量）
+const detailLoading = ref<Record<string, boolean>>({});
+const detailError = ref<Record<string, boolean>>({});
+
 // 编辑状态
 const editingMessageId = ref<string | null>(null);
 const editContent = ref('');
@@ -230,6 +234,50 @@ const toggleMemoryContext = (msgId: string) => {
 
 const toggleKnowledgeContext = (msgId: string) => {
   expandedKnowledgeContext.value[msgId] = !expandedKnowledgeContext.value[msgId];
+};
+
+/**
+ * 展开区懒加载判定：某区块是否需要拉取详情。
+ * 依据服务端存根布尔 hasXxx 与本地内容 undefined 的组合。
+ */
+const needsSectionDetail = (item: any, section: 'reasoning' | 'memory' | 'knowledge' | 'tool'): boolean => {
+  if (section === 'reasoning') return item.hasReasoning === true && item.reasoning === undefined;
+  if (section === 'memory') return item.hasMemoryContext === true && item.memoryContext === undefined;
+  if (section === 'knowledge') return item.hasKnowledgeContext === true && item.knowledgeContext === undefined;
+  // 工具正文：args 或 result 正文任一未下发即需要拉取
+  if (item.type !== 'tool_call' && !item.toolCall) return false;
+  const argsMissing = item.toolCall?.args === undefined;
+  const resultMissing = item.toolCall?.hasResult === true && item.toolCall?.result === undefined;
+  return argsMissing || resultMissing;
+};
+
+/**
+ * 展开时确保详情已在手：需要且未在加载时触发懒加载。
+ * store 的 loadMessageDetail 有 in-flight 去重；此处维护局部 loading/error 态供三分支渲染。
+ */
+const ensureDetail = (item: any, sections: Array<'reasoning' | 'memory' | 'knowledge' | 'tool'>) => {
+  const needed = sections.filter(section => needsSectionDetail(item, section));
+  if (needed.length === 0) return;
+  if (detailLoading.value[item.id] || detailError.value[item.id]) return;
+  detailLoading.value[item.id] = true;
+  detailError.value[item.id] = false;
+  chatStore.loadMessageDetail(item.agentId || props.agentId, item.id).then(() => {
+    detailLoading.value[item.id] = false;
+    // 加载完成后从 store 重读最新消息判定（item 可能是 currentMessages 计算属性
+    // 产出的浅拷贝，详情写入了 store 的原始消息，用旧拷贝判定会误标错误）
+    const fresh = (chatStore.chatMessages[item.agentId || props.agentId] || [])
+      .find(m => m.id === item.id);
+    if (!fresh) return;
+    const still = needed.filter(section => needsSectionDetail(fresh, section));
+    if (still.length > 0) {
+      detailError.value[item.id] = true;
+    }
+  });
+};
+
+const retryDetail = (item: any, sections: Array<'reasoning' | 'memory' | 'knowledge' | 'tool'>) => {
+  detailError.value[item.id] = false;
+  ensureDetail(item, sections);
 };
 
 const currentMessages = computed(() => {
@@ -959,10 +1007,10 @@ const executeDeleteOne = async () => {
               ]"
             >
               <!-- 记忆召回 (AgentMemory) -->
-              <div v-if="item.memoryContext" class="mb-2">
+              <div v-if="item.memoryContext || item.hasMemoryContext" class="mb-2">
                 <div
                   class="flex items-center space-x-2 py-1 px-2 rounded bg-[var(--surface-3)] border border-[var(--border)] cursor-pointer hover:bg-[var(--surface-4)] transition-colors opacity-80"
-                  @click="toggleMemoryContext(item.id)"
+                  @click="toggleMemoryContext(item.id); ensureDetail(item, ['memory'])"
                 >
                   <Database class="w-3 h-3 text-[var(--primary)]" />
                   <span class="text-[10px] font-bold text-[var(--text-3)] uppercase tracking-wider">记忆召回</span>
@@ -971,15 +1019,20 @@ const executeDeleteOne = async () => {
                   <ChevronUp v-else class="w-3 h-3" />
                 </div>
                 <div v-if="expandedMemoryContext[item.id]" class="mt-2 p-3 bg-[var(--surface-3)] rounded-lg text-xs italic text-[var(--text-2)] whitespace-pre-wrap border-l-2 border-[var(--primary)] animate-in fade-in slide-in-from-top-1 duration-200">
-                  {{ item.memoryContext }}
+                  <span v-if="detailLoading[item.id]">加载中…</span>
+                  <template v-else-if="detailError[item.id]">
+                    <span class="text-[var(--text-3)]">加载失败</span>
+                    <button class="text-[var(--primary)] hover:underline ml-2" @click.stop="retryDetail(item, ['memory'])">重试</button>
+                  </template>
+                  <template v-else>{{ item.memoryContext }}</template>
                 </div>
               </div>
 
               <!-- 知识树检索 (KnowledgeTree) -->
-              <div v-if="item.knowledgeContext" class="mb-2">
+              <div v-if="item.knowledgeContext || item.hasKnowledgeContext" class="mb-2">
                 <div
                   class="flex items-center space-x-2 py-1 px-2 rounded bg-[var(--surface-3)] border border-[var(--border)] cursor-pointer hover:bg-[var(--surface-4)] transition-colors opacity-80"
-                  @click="toggleKnowledgeContext(item.id)"
+                  @click="toggleKnowledgeContext(item.id); ensureDetail(item, ['knowledge'])"
                 >
                   <BookOpen class="w-3 h-3 text-[var(--primary)]" />
                   <span class="text-[10px] font-bold text-[var(--text-3)] uppercase tracking-wider">知识树</span>
@@ -988,15 +1041,20 @@ const executeDeleteOne = async () => {
                   <ChevronUp v-else class="w-3 h-3" />
                 </div>
                 <div v-if="expandedKnowledgeContext[item.id]" class="mt-2 p-3 bg-[var(--surface-3)] rounded-lg text-xs italic text-[var(--text-2)] whitespace-pre-wrap border-l-2 border-[var(--primary)] animate-in fade-in slide-in-from-top-1 duration-200">
-                  {{ item.knowledgeContext }}
+                  <span v-if="detailLoading[item.id]">加载中…</span>
+                  <template v-else-if="detailError[item.id]">
+                    <span class="text-[var(--text-3)]">加载失败</span>
+                    <button class="text-[var(--primary)] hover:underline ml-2" @click.stop="retryDetail(item, ['knowledge'])">重试</button>
+                  </template>
+                  <template v-else>{{ item.knowledgeContext }}</template>
                 </div>
               </div>
 
               <!-- 思考过程 (Reasoning) -->
-              <div v-if="item.reasoning" class="mb-3">
-                <div 
+              <div v-if="item.reasoning || item.hasReasoning" class="mb-3">
+                <div
                   class="flex items-center space-x-2 py-1 px-2 rounded bg-[var(--surface-3)] border border-[var(--border)] cursor-pointer hover:bg-[var(--surface-4)] transition-colors opacity-80"
-                  @click="toggleReasoning(item.id)"
+                  @click="toggleReasoning(item.id); ensureDetail(item, ['reasoning'])"
                 >
                   <Sparkles class="w-3 h-3 text-[var(--primary)]" />
                   <span class="text-[10px] font-bold text-[var(--text-3)] uppercase tracking-wider">思考过程</span>
@@ -1004,21 +1062,28 @@ const executeDeleteOne = async () => {
                   <ChevronDown v-if="!expandedReasoning[item.id]" class="w-3 h-3" />
                   <ChevronUp v-else class="w-3 h-3" />
                 </div>
-                
+
                 <!-- 思考过程展开内容复用工具调用内思考内容的视觉风格，避免亮色主题下出现纯白背景。 -->
                 <div v-if="expandedReasoning[item.id]" class="mt-2 p-3 bg-[var(--surface-3)] rounded-lg text-xs italic text-[var(--text-2)] whitespace-pre-wrap border-l-2 border-[var(--primary)] animate-in fade-in slide-in-from-top-1 duration-200">
-                  <template v-if="searchKeyword?.trim()">
-                    <span v-html="renderHighlightedContent(item.reasoning, item.id)"></span>
+                  <span v-if="detailLoading[item.id]">加载中…</span>
+                  <template v-else-if="detailError[item.id]">
+                    <span class="text-[var(--text-3)]">加载失败</span>
+                    <button class="text-[var(--primary)] hover:underline ml-2" @click.stop="retryDetail(item, ['reasoning'])">重试</button>
                   </template>
-                  <template v-else>{{ item.reasoning }}</template>
+                  <template v-else>
+                    <template v-if="searchKeyword?.trim()">
+                      <span v-html="renderHighlightedContent(item.reasoning, item.id)"></span>
+                    </template>
+                    <template v-else>{{ item.reasoning }}</template>
+                  </template>
                 </div>
               </div>
 
               <!-- 单个工具调用 (非组内) -->
               <div v-if="item.toolCall" class="mb-2">
-                <div 
+                <div
                   class="flex items-center space-x-2 py-1 px-2 rounded bg-[var(--surface-3)] border border-[var(--border)] cursor-pointer hover:bg-[var(--surface-4)] transition-colors"
-                  @click="toggleToolCall(item.id)"
+                  @click="toggleToolCall(item.id); ensureDetail(item, ['tool'])"
                 >
                   <Wrench class="w-3 h-3 text-[var(--primary)]" />
                   <span class="text-xs font-mono font-bold text-[var(--text-1)]">{{ item.toolCall.name }}</span>
@@ -1026,9 +1091,19 @@ const executeDeleteOne = async () => {
                   <ChevronDown v-if="!expandedToolCalls[item.id]" class="w-3 h-3" />
                   <ChevronUp v-else class="w-3 h-3" />
                 </div>
-                
+
                 <div v-if="expandedToolCalls[item.id]" class="mt-2 space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
-                  <div class="p-3 bg-[var(--surface-1)] border border-[var(--border)] rounded-lg">
+                  <!-- 存根正文未加载时显示加载/重试分支 -->
+                  <template v-if="detailLoading[item.id] || detailError[item.id] || (item.toolCall.args === undefined && item.toolCall.result === undefined)">
+                    <div class="p-3 bg-[var(--surface-1)] border border-[var(--border)] rounded-lg text-xs text-[var(--text-3)]">
+                      <span v-if="detailLoading[item.id]">加载详情中…</span>
+                      <template v-else-if="detailError[item.id]">
+                        加载失败
+                        <button class="text-[var(--primary)] hover:underline ml-1" @click.stop="retryDetail(item, ['tool'])">重试</button>
+                      </template>
+                    </div>
+                  </template>
+                  <div v-if="item.toolCall.args !== undefined" class="p-3 bg-[var(--surface-1)] border border-[var(--border)] rounded-lg">
                     <div class="text-[10px] font-bold text-[var(--text-3)] uppercase tracking-wider mb-1">参数</div>
                     <MessageContent
                       :content="JSON.stringify(parseJson(item.toolCall.args), null, 2)"
@@ -1036,7 +1111,7 @@ const executeDeleteOne = async () => {
                       :message-id="item.id"
                     />
                   </div>
-                  <div v-if="item.toolCall.result" class="p-3 bg-[var(--surface-1)] border border-[var(--border)] rounded-lg">
+                  <div v-if="item.toolCall.result !== undefined" class="p-3 bg-[var(--surface-1)] border border-[var(--border)] rounded-lg">
                     <div class="text-[10px] font-bold text-[var(--text-3)] uppercase tracking-wider mb-1">执行结果</div>
                     <MessageContent
                       :content="JSON.stringify(parseJson(item.toolCall.result), null, 2)"
@@ -1246,7 +1321,7 @@ const executeDeleteOne = async () => {
                 <div v-for="msg in item.messages" :key="msg.id" class="border border-[var(--border)] rounded-xl overflow-hidden bg-[var(--surface-1)]">
                   <div 
                     class="px-3 py-1.5 bg-[var(--surface-2)] flex items-center justify-between cursor-pointer hover:bg-[var(--surface-3)]"
-                    @click="toggleToolCall(msg.id)"
+                    @click="toggleToolCall(msg.id); ensureDetail(msg, ['tool', 'reasoning'])"
                   >
                     <div class="flex items-center space-x-2">
                       <Wrench class="w-3 h-3 text-[var(--primary)] opacity-70" />
@@ -1255,16 +1330,24 @@ const executeDeleteOne = async () => {
                     <ChevronDown v-if="!expandedToolCalls[msg.id]" class="w-3 h-3 opacity-50" />
                     <ChevronUp v-else class="w-3 h-3 opacity-50" />
                   </div>
-                  
+
                   <div v-if="expandedToolCalls[msg.id]" class="p-3 space-y-2 border-t border-[var(--border)]">
-                    <!-- 组内消息的思考过程 -->
+                    <!-- 组内消息的思考过程（存根时随单条详情懒加载回填） -->
                     <div v-if="msg.reasoning" class="mb-2 p-2 bg-[var(--surface-3)] rounded text-[11px] italic text-[var(--text-3)] whitespace-pre-wrap border-l-2 border-[var(--primary)]">
                       <template v-if="searchKeyword?.trim()">
                         <span v-html="renderHighlightedContent(msg.reasoning, msg.id)"></span>
                       </template>
                       <template v-else>{{ msg.reasoning }}</template>
                     </div>
-                    <div class="space-y-1">
+                    <!-- 存根正文未加载时显示加载/重试分支 -->
+                    <div v-if="detailLoading[msg.id] || detailError[msg.id] || (msg.toolCall.args === undefined && msg.toolCall.result === undefined)" class="text-xs text-[var(--text-3)]">
+                      <span v-if="detailLoading[msg.id]">加载详情中…</span>
+                      <template v-else-if="detailError[msg.id]">
+                        加载失败
+                        <button class="text-[var(--primary)] hover:underline ml-1" @click.stop="retryDetail(msg, ['tool', 'reasoning'])">重试</button>
+                      </template>
+                    </div>
+                    <div v-if="msg.toolCall.args !== undefined" class="space-y-1">
                       <div class="text-[10px] font-bold text-[var(--text-3)] uppercase">参数</div>
                       <MessageContent
                         :content="JSON.stringify(parseJson(msg.toolCall.args), null, 2)"
@@ -1272,7 +1355,7 @@ const executeDeleteOne = async () => {
                         :message-id="msg.id"
                       />
                     </div>
-                    <div v-if="msg.toolCall.result" class="space-y-1">
+                    <div v-if="msg.toolCall.result !== undefined" class="space-y-1">
                       <div class="text-[10px] font-bold text-[var(--text-3)] uppercase">结果</div>
                       <MessageContent
                         :content="JSON.stringify(parseJson(msg.toolCall.result), null, 2)"
@@ -1282,7 +1365,7 @@ const executeDeleteOne = async () => {
                     </div>
                     <!-- 单个工具调用的 Token 使用量 -->
                     <div v-if="msg.usage && msg.usage.totalTokens > 0" class="pt-1 border-t border-[var(--border)]">
-                      <span 
+                      <span
                         class="text-[10px] text-[var(--text-3)] cursor-help"
                         @mouseenter="showTokenTooltip($event, msg.usage)"
                         @mouseleave="hideTokenTooltip"

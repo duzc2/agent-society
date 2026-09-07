@@ -113,10 +113,17 @@ export function normalizeHeartbeatMessage(rawMsg: any, agentId: string): Message
   }
 
   if (rawMsg.type === 'tool_call') {
+    // 服务端存根：payload 为 { toolName, usage, hasResult, result: { files } | null }。
+    // args 与 result 正文不随推送下发；result 在存根形态下保持 undefined（hasResult 标记
+    // 存在性），文件列表经 payload.result.files 供 getFilesFromPayload 消费，
+    // 展开时经 detail 端点懒加载正文后填充。旧服务端兼容：payload 若带全量
+    // args/result（无 hasResult 字段）则直接采用。
+    const isStub = payload?.hasResult !== undefined;
     toolCall = {
       name: payload?.toolName || 'unknown',
       args: payload?.args,
-      result: payload?.result
+      result: isStub ? undefined : payload?.result,
+      hasResult: isStub ? payload.hasResult === true : undefined
     };
     content = `调用工具: ${toolCall.name}`;
     usage = normalizeTokenUsage(payload?.usage);
@@ -146,6 +153,10 @@ export function normalizeHeartbeatMessage(rawMsg: any, agentId: string): Message
     taskId: rawMsg.taskId,
     usage,
     payload,
+    // 存根布尔：服务端标记存在对应内容但未随推送下发，展开时懒加载
+    hasReasoning: rawMsg.hasReasoning === true || undefined,
+    hasMemoryContext: rawMsg.hasMemoryContext === true || undefined,
+    hasKnowledgeContext: rawMsg.hasKnowledgeContext === true || undefined,
     memoryContext: typeof rawMsg.memoryContext === 'string' ? rawMsg.memoryContext : undefined,
     knowledgeContext: typeof rawMsg.knowledgeContext === 'string' ? rawMsg.knowledgeContext : undefined,
     scheduledDeliveryTime: rawMsg.scheduledDeliveryTime,
@@ -388,6 +399,17 @@ export const apiService = {
   async searchMessages(agentId: string, query: string): Promise<any[]> {
     const data = await request<{ matches: any[] }>(`/agent-messages/${encodeURIComponent(agentId)}/search?q=${encodeURIComponent(query)}`);
     return data.matches || [];
+  },
+
+  /**
+   * 获取单条消息完整详情（懒加载用）。
+   * 服务端推送/列表为裁剪存根（不含思考/记忆/知识/工具正文），
+   * 展开时按消息 ID 经此端点回查全量。
+   * @returns 服务端原始消息对象（未 normalize）
+   */
+  async getMessageDetail(agentId: string, messageId: string): Promise<any> {
+    const data = await request<{ message: any }>(`/agent-messages/${encodeURIComponent(agentId)}/detail/${encodeURIComponent(messageId)}`);
+    return data.message;
   },
 
   /**
