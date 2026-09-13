@@ -136,3 +136,9 @@ config/chat.json
 package-lock.json
 nul
 tmp/
+
+# Oversized binaries exceeding GitHub's 100MB per-file limit.
+# Kept on disk; supply them separately after cloning.
+runtime/bun/bin/bun.exe
+runtime/bun/bin/bunx.exe
+models/*.gguf
