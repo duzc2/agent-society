@@ -52,6 +52,12 @@ describe("Config Concurrency Support", () => {
           fc.boolean() // 无效值（布尔值）
         ),
         async (maxConcurrentRequests) => {
+          // 生成值经 JSON.stringify 落盘后可能变形：Infinity/NaN 会静默写成 null，
+          // undefined 则让整个键消失。断言必须基于落盘后的实际值，否则生成值与磁盘内容不一致。
+          const effective = maxConcurrentRequests === undefined
+            ? undefined
+            : JSON.parse(JSON.stringify(maxConcurrentRequests));
+
           // 创建测试配置
           const config = {
             promptsDir: "config/prompts",
@@ -65,8 +71,8 @@ describe("Config Concurrency Support", () => {
           };
 
           // 只有当值不是undefined时才添加maxConcurrentRequests
-          if (maxConcurrentRequests !== undefined) {
-            config.llm.maxConcurrentRequests = maxConcurrentRequests;
+          if (effective !== undefined) {
+            config.llm.maxConcurrentRequests = effective;
           }
 
           const configPath = path.join(testConfigDir, "app.json");
@@ -84,13 +90,13 @@ describe("Config Concurrency Support", () => {
           assert.notStrictEqual(loadedConfig.llm, undefined);
           assert.strictEqual(typeof loadedConfig.llm.maxConcurrentRequests, "number");
 
-          if (maxConcurrentRequests === undefined || maxConcurrentRequests === null) {
+          if (effective === undefined || effective === null) {
             // 未配置或null时应使用默认值
             assert.strictEqual(loadedConfig.llm.maxConcurrentRequests, 3);
             assert.strictEqual(console.warn.mock.callCount(), 0);
-          } else if (Number.isInteger(maxConcurrentRequests) && maxConcurrentRequests > 0) {
+          } else if (Number.isInteger(effective) && effective > 0) {
             // 有效值时应使用配置值
-            assert.strictEqual(loadedConfig.llm.maxConcurrentRequests, maxConcurrentRequests);
+            assert.strictEqual(loadedConfig.llm.maxConcurrentRequests, effective);
             assert.strictEqual(console.warn.mock.callCount(), 0);
           } else {
             // 无效值时应使用默认值并记录警告
@@ -100,7 +106,7 @@ describe("Config Concurrency Support", () => {
             assert.ok(console.warn.mock.callCount() > 0);
             // @ts-ignore - mock 方法
             const warnCall = console.warn.mock.calls[0];
-            assert.ok(String(warnCall.arguments[0]).includes(`Invalid maxConcurrentRequests value: ${maxConcurrentRequests}`));
+            assert.ok(String(warnCall.arguments[0]).includes(`Invalid maxConcurrentRequests value: ${effective}`));
           }
         }
       ), { numRuns: 100 });
