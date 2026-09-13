@@ -1,78 +1,78 @@
 # Agent Society
 
-> 自组织多智能体协作框架
+> Self-organizing multi-agent collaboration framework
 
-[English](./README.en.md) | 中文
+English | [中文](./README.zh.md)
 
-Agent Society 是一个基于大语言模型的智能体协作系统。智能体可以自主建立组织、分配任务、协作完成复杂目标。
+Agent Society is an LLM-based agent collaboration system. Agents autonomously build organizations, assign tasks, and collaborate to complete complex goals.
 
 ---
 
 ![Agent Society UI](docs/images/首页.png)
 
-## 核心特性
+## Key Features
 
-- **自组织** - 智能体自主创建岗位、分配任务、建立协作关系，无需预置组织结构
-- **多模型支持** - 同时连接多个 LLM 服务，根据任务智能选择最合适的模型
-- **异步协作** - 智能体通过消息通信，支持并行处理与复杂协作模式
-- **Web 界面** - 内置仿微信风格的可视化界面，实时查看对话和组织结构
-- **模块化扩展** - 动态加载外部模块，扩展工具能力和 Web 组件
+- **Self-organizing** - Agents autonomously create roles, assign tasks, and establish collaboration relationships, with no preset org structure
+- **Multi-model support** - Connect to multiple LLM services simultaneously; the system selects the best model per task
+- **Async collaboration** - Agents communicate via messages, supporting parallel processing and complex collaboration patterns
+- **Web interface** - Built-in WeChat-style visual interface; view conversations and org structure in real time
+- **Modular extension** - Dynamically load external modules to extend tools and web components
 
 ---
 
-## 多层记忆
+## Layered Memory
 
-Agent Society 为智能体设计了多层记忆机制：
+Agent Society gives agents multiple memory layers:
 
-- **提示词自修改** - 智能体可以把重要内容注入自己的提示词（systemPromptAppendix）
-- **向量记忆** - 长期零碎记忆先由小模型提取摘要，再存入向量数据库
-- **事件与技能记忆** - 重要事件摘要和技能由大模型摘要，存入层级管理的文件夹
-- **团队共识** - 跨智能体的共识写成文档，放在工作区
-- **岗位提示词** - 岗位工作内容放在岗位提示词里，同岗位智能体共享
-- **工作日志** - 智能体可以在工作区里写工作日志
-- **报告传递** - 消息量大时在工作区写报告，只传文件名
-- **技能** - 智能体可以自己创建技能
-- **组织提示词** - 整个组织的提示词定义组织存在的意义和工作目标
+- **Prompt self-modification** - Agents inject important content into their own prompts (systemPromptAppendix)
+- **Vector memory** - Long-term fragmentary memories are summarized by a small model, then stored in a vector database
+- **Event & skill memory** - Significant event summaries and skills are summarized by a large model, stored in hierarchically managed folders
+- **Team consensus** - Cross-agent consensus is written as documents in the workspace
+- **Role prompts** - Role-level work content lives in the role prompt, shared by all agents of that role
+- **Work logs** - Agents can write work logs in the workspace
+- **Report passing** - For large message payloads, agents write reports to the workspace and pass only filenames
+- **Skills** - Agents can create their own skills
+- **Org prompt** - A prompt for the whole organization, defining why it exists and what it aims to achieve
 
-这是七层记忆、基于异步消息和文档、技能固化的协作模式。
+This is a collaboration model built on layered memory, async messaging, documents, and skill solidification.
 
-Agent Society 还允许智能体修改软件本身：直接把一项能力变成代码，注入到软件里。智能体有能力修改软件的界面、创造新的功能。智能体可以自我进化，软件也可以根据用户的需要自我进化。
+Agent Society also lets agents modify the software itself: they can turn a capability directly into code and inject it into the software. Agents can modify the software's interface and create new features. Agents can evolve themselves, and the software evolves with user needs.
 
 ![Agent Society 输入需求](docs/images/输入需求.png)
 ![Agent Society work](docs/images/work.png)
 
-### 记事本操作
+### Notepad Operations
 
-[![记事本操作](docs/video/记事本操作.jpg "点击观看")](docs/video/记事本操作.mp4)
+[![记事本操作](docs/video/记事本操作.jpg "Watch")](docs/video/记事本操作.mp4)
 
-### 软件研发团队
+### Software Development Team
 
-[![软件团队](docs/video/软件团队.jpg "点击观看")](docs/video/软件团队.mp4)
+[![软件团队](docs/video/软件团队.jpg "Watch")](docs/video/软件团队.mp4)
 
-### 浏览器开发者工具调用
+### Browser DevTools Invocation
 
-[![获取网页控制台](docs/video/获取网页控制台.jpg "点击观看")](docs/video/获取网页控制台.mp4)
+[![获取网页控制台](docs/video/获取网页控制台.jpg "Watch")](docs/video/获取网页控制台.mp4)
 
-### 视频生成和剪辑
+### Video Generation and Editing
 
-[![视频生成和剪辑](docs/video/视频生成和剪辑2.jpg "点击观看")](docs/video/视频生成和剪辑.mp4)
+[![视频生成和剪辑](docs/video/视频生成和剪辑2.jpg "Watch")](docs/video/视频生成和剪辑.mp4)
 
-### 即时生成UI
+### Instant UI Generation
 
-[![打地鼠](docs/video/打地鼠.jpg "点击观看")](docs/video/打地鼠.mp4)
+[![打地鼠](docs/video/打地鼠.jpg "Watch")](docs/video/打地鼠.mp4)
 
-### 天气挂件即时生成
+### Instant Weather Widget
 
 ![天气挂件需求](docs/images/天气挂件需求.png)
 ![天气挂件需求](docs/images/天气挂件效果.png)
 
-### 组织架构
+### Organization Structure
 
 ![组织架构](docs/images/组织架构.png)
 
 ---
 
-### 更多样例
+### More Examples
 
 ![Agent Society 查天气](docs/images/查天气.png)
 
@@ -80,97 +80,105 @@ Agent Society 还允许智能体修改软件本身：直接把一项能力变成
 
 ![Agent Society 推荐旅游路线报告HTML内容](docs/images/推荐旅游路线报告HTML内容.png)
 
-## 快速开始
+## Quick Start
 
-### 环境要求
+### Requirements
 
-- Node.js >= 18（推荐）。项目内置 [Bun](https://bun.sh/) 作为备选运行时，无需 Node.js 时自动启用
-- 兼容 OpenAI API 的 LLM 服务
+- Node.js >= 18 (recommended). [Bun](https://bun.sh/) is supported as a fallback runtime; the start scripts offer to install it when Node.js is unavailable
+- An OpenAI-API-compatible LLM service
+- (Optional) An embedding model. The repository does not ship `models/qwen3-embedding.gguf`; supply the file yourself, or point the `embedding` section in `config/app.json` at a remote `provider`
 
-### 安装
+### Installation
+
+Clone from either host:
 
 ```bash
-git clone https://gitee.com/duzc2/agent_society.git
+# GitHub
+git clone https://github.com/duzc2/agent-society.git agent_society
+
+# or Gitee
+git clone https://gitee.com/duzc2/agent_society.git agent_society
+
 cd agent_society
 npm install
 ```
 
-### 启动
+### Launch
 
 ```bash
 npm start
 ```
 
-启动后会自动打开浏览器访问 Web 界面（`http://localhost:3000`）。
+A browser opens the web interface at `http://localhost:3000`.
 
 ---
 
-## 使用方式
+## Usage
 
-启动系统后，在浏览器里与智能体对话：
+After launch, talk to the agents in the browser:
 
-1. 向 Root 智能体提出需求
-2. 观察智能体自主拆解任务、创建子智能体
-3. 实时查看智能体之间的协作过程
-4. 随时介入对话，与智能体互动
+1. State a requirement to the Root agent
+2. Watch agents decompose the task and create sub-agents
+3. Observe agent-to-agent collaboration in real time
+4. Jump into the conversation at any time
 
-### 正确的使用姿势
+### The intended way to use it
 
-系统完全模拟人类管理企业的方法。使用时把自己当成管理者：考虑如何建立自己的组织——设哪些岗位、招什么人、怎么分工。
+The system mirrors how humans run an organization. Think of yourself as the manager: consider how to build your organization — which roles to create, whom to staff, how to divide the work.
 
-- **确定岗位**：每个智能体必须在岗位上。为每一种工作创造一个岗位，岗位可以增加、减少，职责可以修改。
-- **长期工作**：软件里没有新建会话的能力，也不为每个任务另起一批智能体。长期使用同一个岗位上的智能体，它会积累记忆、沉淀技能，越用越熟练。
-- **Root 只建组织**：根智能体不做任何工作，只负责建立组织。真正干活的是岗位上的智能体。
-- **组织即公司**：每个组织都可以作为一家独立的公司来管理，组织之间也可以有合作。
-- **层层建团队**：每个智能体都可以建立下级岗位，并在岗位上创建智能体。
-- **招聘零成本**：智能体是虚拟员工，招聘和解聘的成本接近 0——大胆按业务调整编制。
+- **Defined roles**: every agent must hold a position. Create one role for each kind of work; roles can be added, removed, and their duties edited.
+- **Long-term agents**: there is no "new session" capability, and no fresh batch of agents per task. Use the agents on a role long term — they accumulate memory and solidify skills, performing better the longer they serve.
+- **Root only builds organizations**: the Root agent does no work at all — it only builds the organization. The real work is done by the agents on their roles.
+- **Organization as company**: each organization can be managed as an independent company, and organizations can cooperate.
+- **Teams at every level**: every agent can create sub-roles and staff agents on them.
+- **Near-zero hiring cost**: agents are virtual employees — recruiting and firing costs nearly nothing, so adjust staffing boldly with the business.
 
 ---
 
-## 系统工作方式
+## How It Works
 
 ```
-用户
+User
  │
  ▼
-Root 智能体 —— 分析需求，拆解任务
+Root agent —— analyzes the requirement, decomposes tasks
  │
  ├──────┬──────┐
  ▼      ▼      ▼
-智能体A  智能体B  智能体C
+Agent A  Agent B  Agent C
  │        │
  ▼        ▼
-智能体D  智能体E
+Agent D  Agent E
 ```
 
-1. **用户**向 Root 智能体提出需求
-2. **Root**分析需求，决定是否需要创建子智能体
-3. **子智能体**独立执行任务，必要时继续创建下级智能体
-4. **结果汇总**后返回给用户
+1. The **user** states a requirement to the Root agent
+2. **Root** analyzes it and decides whether sub-agents are needed
+3. **Sub-agents** execute independently, creating lower-level agents when necessary
+4. **Results** are aggregated and returned to the user
 
-每个智能体只掌握完成任务所需的最小上下文，复杂任务通过工作区和消息传递协作完成。
+Each agent holds only the minimal context needed for its task; complex tasks are completed through workspace documents and messages.
 
 ---
 
-## 配置
+## Configuration
 
-第一次登录网页后会弹出设置界面。如需手动配置，编辑配置文件后重启服务器加载。
+A setup dialog appears on first login. To configure manually, edit config files and restart the server.
 
-1. 复制配置文件模板：
+1. Copy the config templates:
 
 ```bash
 cp config/app.json config/app.local.json
 cp config/llmservices_template.json config/llmservices.local.json
 ```
 
-2. 编辑 `config/llmservices.local.json`，配置 LLM 服务：
+2. Edit `config/llmservices.local.json` to configure LLM services:
 
 ```json
 {
   "services": [
     {
       "id": "local",
-      "name": "本地模型",
+      "name": "Local model",
       "baseURL": "http://127.0.0.1:1234/v1",
       "model": "your-model-name",
       "apiKey": "NOT_NEEDED",
@@ -182,9 +190,9 @@ cp config/llmservices_template.json config/llmservices.local.json
 
 ---
 
-### 配置多模型服务
+### Multi-Model Configuration
 
-为不同岗位配置不同的 LLM 服务：
+Assign different LLM services to different roles:
 
 ```json
 {
@@ -199,7 +207,7 @@ cp config/llmservices_template.json config/llmservices.local.json
     },
     {
       "id": "local",
-      "name": "本地模型",
+      "name": "Local model",
       "baseURL": "http://localhost:1234/v1",
       "model": "qwen2.5-7b",
       "apiKey": "any",
@@ -209,18 +217,18 @@ cp config/llmservices_template.json config/llmservices.local.json
 }
 ```
 
-系统根据岗位提示词自动选择最合适的模型，也可以手动指定。
+The system selects the best model per role prompt automatically; manual pinning is also supported.
 
 ---
 
-### 扩展模块
+### Extension Modules
 
-通过模块扩展系统能力：
+Extend the system through modules:
 
-- **chrome** - 控制 Chrome 浏览器，实现网页自动化
-- **ssh** - SSH 远程连接，操作远程服务器
+- **chrome** - Control Chrome for web automation
+- **ssh** - SSH remote connections to operate remote servers
 
-编辑 `config/modules.enabled.json`：
+Edit `config/modules.enabled.json`:
 
 ```json
 {
@@ -231,20 +239,20 @@ cp config/llmservices_template.json config/llmservices.local.json
 
 ---
 
-## 文档
+## Documentation
 
-| 文档 | 说明 |
-|------|------|
-| [用户手册（中文）](./docs/zh/user-guide/index.md) | 安装、使用、配置、进阶 |
-| [开发者文档（中文）](./docs/zh/developer-guide/index.md) | 架构、服务层、扩展开发 |
+| Document | Description |
+|----------|-------------|
 | [User Guide (English)](./docs/en/user-guide/index.md) | Installation, usage, configuration |
 | [Developer Guide (English)](./docs/en/developer-guide/index.md) | Architecture, services, extensions |
+| [用户手册（中文）](./docs/zh/user-guide/index.md) | 安装、使用、配置、进阶 |
+| [开发者文档（中文）](./docs/zh/developer-guide/index.md) | 架构、服务层、扩展开发 |
 
 ---
 
-## 开源协议
+## License
 
-本项目采用 [Apache License 2.0](./LICENSE) 开源协议。
+This project is licensed under the [Apache License 2.0](./LICENSE).
 
 ```
 Copyright 2025 Agent Society Contributors
@@ -265,7 +273,8 @@ limitations under the License.
 ---
 
 <p align="center">
+  <a href="https://github.com/duzc2/agent-society">GitHub</a> •
   <a href="https://gitee.com/duzc2/agent_society">Gitee</a> •
-  <a href="./docs/zh/user-guide/index.md">文档</a> •
-  <a href="./LICENSE">许可证</a>
+  <a href="./docs/en/user-guide/index.md">Docs</a> •
+  <a href="./LICENSE">License</a>
 </p>
