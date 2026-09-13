@@ -9,7 +9,7 @@
 | LLM 服务 | 任意 OpenAI API 兼容的服务（本地 LM Studio/Ollama，或云端 API） |
 | 磁盘空间 | 建议 ≥ 2 GB |
 
-> 没有 Node.js：直接下载发行包（内含运行时）；或使用源码内置的 Bun 回退。
+> 没有 Node.js：直接下载发行包（内含运行时）；或使用源码时由启动脚本引导安装 Bun 作为回退。
 
 ## 安装
 
@@ -19,8 +19,15 @@
 
 **方式二：源码**
 
+从任一托管平台克隆：
+
 ```bash
-git clone https://gitee.com/duzc2/agent_society.git
+# GitHub
+git clone https://github.com/duzc2/agent-society.git agent_society
+
+# 或 Gitee
+git clone https://gitee.com/duzc2/agent_society.git agent_society
+
 cd agent_society
 npm install
 ```

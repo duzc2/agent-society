@@ -9,7 +9,7 @@
 | LLM service | Any OpenAI-API-compatible service (local LM Studio/Ollama, or cloud API) |
 | Disk | ≥ 2 GB suggested |
 
-> No Node.js? Download a release package (runtime included); or use the built-in Bun fallback.
+> No Node.js? Download a release package (runtime included); or run from source and let the start scripts install Bun as a fallback.
 
 ## Installation
 
@@ -19,8 +19,15 @@ Download the zip or installer from Gitee, extract, and run `start.cmd` (Windows)
 
 **Option 2: from source**
 
+Clone from either host:
+
 ```bash
-git clone https://gitee.com/duzc2/agent_society.git
+# GitHub
+git clone https://github.com/duzc2/agent-society.git agent_society
+
+# or Gitee
+git clone https://gitee.com/duzc2/agent_society.git agent_society
+
 cd agent_society
 npm install
 ```

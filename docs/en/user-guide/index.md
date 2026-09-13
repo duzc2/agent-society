@@ -40,5 +40,6 @@ If you are a developer who wants to understand the internal architecture or exte
 
 ## Help & Feedback
 
-- Project home: <https://gitee.com/duzc2/agent_society>
+- Project home (GitHub): <https://github.com/duzc2/agent-society>
+- Project home (Gitee): <https://gitee.com/duzc2/agent_society>
 - Bug reports: open an issue in the repository, and attach logs from `agent-society-data/logs/`.

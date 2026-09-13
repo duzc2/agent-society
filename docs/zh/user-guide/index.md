@@ -40,5 +40,6 @@
 
 ## 帮助与反馈
 
-- 项目主页：<https://gitee.com/duzc2/agent_society>
+- 项目主页（GitHub）：<https://github.com/duzc2/agent-society>
+- 项目主页（Gitee）：<https://gitee.com/duzc2/agent_society>
 - 问题反馈：请到仓库 Issues 区提交，附上 `agent-society-data/logs/` 下的日志。
